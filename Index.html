@@ -73,9 +73,17 @@
   .reason-row .fields { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
   select, input[type="text"], input[type="number"] { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0; max-width: 100%; }
   .coin { width: 96px; height: 96px; border-radius: 50%; background: var(--coin); color: var(--coin-ink); border: 4px solid rgba(0,0,0,.18); display: flex; align-items: center; justify-content: center; font-size: 40px; font-weight: 800; box-shadow: inset 0 -6px 0 rgba(0,0,0,.12); }
-  .coin.pop { animation: pop .7s cubic-bezier(.2,1.4,.4,1); }
-  @keyframes pop { from { transform: scale(.2) rotate(-40deg); opacity: 0; } to { transform: none; opacity: 1; } }
-  @media (prefers-reduced-motion: reduce) { .coin.pop { animation: none; } }
+  .flip { perspective: 800px; width: 124px; height: 164px; background: none; border: 0; padding: 0; cursor: pointer; flex: none; }
+  .flip:disabled { cursor: default; }
+  .flip-inner { position: relative; display: block; width: 100%; height: 100%; transition: transform .7s cubic-bezier(.3,1.3,.5,1); transform-style: preserve-3d; }
+  .flip.flipped .flip-inner { transform: rotateY(180deg); }
+  .face { position: absolute; inset: 0; border-radius: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; -webkit-backface-visibility: hidden; backface-visibility: hidden; }
+  .face.back { background: var(--accent); color: var(--accent-ink); border: 3px solid rgba(255,255,255,.4); box-shadow: 0 4px 14px rgba(0,0,0,.18); }
+  .face.back b { font-size: 54px; line-height: 1; }
+  .face.back small { font-size: 12px; opacity: .9; }
+  .face.front { background: var(--surface); border: 3px solid var(--coin); transform: rotateY(180deg); }
+  .face.front .coin { width: 84px; height: 84px; font-size: 38px; }
+  @media (prefers-reduced-motion: reduce) { .flip-inner { transition: none; } }
   .reveal { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
   .reveal h2 { font-size: 20px; }
   .total { display: flex; align-items: center; gap: 14px; }
@@ -159,8 +167,13 @@
 
     <div class="card" id="done" hidden>
       <div class="reveal">
-        <div class="coin pop" id="done-coin" aria-hidden="true">0</div>
-        <div><h2 id="done-title"></h2><p class="muted" id="done-sub"></p></div>
+        <button type="button" class="flip" id="flip" aria-label="뒤집어진 카드입니다. 눌러서 코인을 확인하세요" hidden>
+          <span class="flip-inner">
+            <span class="face back"><b>?</b><small>눌러서 뒤집기</small></span>
+            <span class="face front"><span class="coin" id="done-coin" aria-hidden="true">0</span></span>
+          </span>
+        </button>
+        <div role="status"><h2 id="done-title"></h2><p class="muted" id="done-sub"></p></div>
       </div>
       <div class="row"><button class="btn" id="btn-again" type="button">처음으로</button></div>
     </div>
@@ -418,18 +431,35 @@
 
   function showDone(r) {
     ['#s1', '#s2', '#s3', '#s4'].forEach(function (s) { $(s).hidden = true; });
-    var d = $('#done'); d.hidden = false;
-    var coin = $('#done-coin');
-    coin.classList.remove('pop'); void coin.offsetWidth; coin.classList.add('pop');
-    coin.textContent = r.coins;
+    $('#done').hidden = false;
+    var flip = $('#flip');
+    flip.classList.remove('flipped'); flip.disabled = false;
+    $('#done-title').textContent = '제출했습니다';
     if (r.coins > 0) {
-      $('#done-title').textContent = r.coins >= 10 ? '대박! 코인 ' + r.coins + '개를 받았어요' : '코인 ' + r.coins + '개를 받았어요';
-      $('#done-sub').textContent = '내 코인은 모두 ' + r.total + '개입니다.';
+      flip.hidden = false; flip.focus();
+      $('#done-coin').textContent = r.coins;
+      $('#done-sub').textContent = '카드를 눌러서 코인을 확인하세요.';
+      $('#btn-again').hidden = true;
+      doneResult = r;
     } else {
-      $('#done-title').textContent = '제출했습니다';
+      flip.hidden = true; doneResult = null;
       $('#done-sub').textContent = r.why === 'already' ? '이 시간대는 이미 코인이 지급되어 이번에는 코인이 없습니다.' : '사진 분석을 거치지 않은 제출은 코인이 지급되지 않습니다.';
+      $('#btn-again').hidden = false;
     }
   }
+  var doneResult = null;
+  $('#flip').onclick = function () {
+    var flip = $('#flip'); if (!doneResult || flip.classList.contains('flipped')) return;
+    var r = doneResult;
+    flip.classList.add('flipped'); flip.disabled = true;
+    flip.setAttribute('aria-label', '코인 ' + r.coins + '개');
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    setTimeout(function () {
+      $('#done-title').textContent = '코인 ' + r.coins + '개를 받았어요';
+      $('#done-sub').textContent = '내 코인은 모두 ' + r.total + '개입니다.';
+      $('#btn-again').hidden = false;
+    }, reduce ? 0 : 650);
+  };
   $('#btn-again').onclick = function () { resetFlow(); renderPeriodNote(); };
 
   /* ----- 내 코인 ----- */
