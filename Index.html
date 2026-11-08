@@ -102,6 +102,47 @@
   th { font-size: 12.5px; color: var(--muted); border-top: 0; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .empty { text-align: center; padding: 24px 12px; color: var(--muted); }
+
+  /* ----- 선생님 대시보드 ----- */
+  :root { --seq: #2a78d6; }
+  @media (prefers-color-scheme: dark) { :root { --seq: #3987e5; } }
+  .dash-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .tile .l { font-size: 13px; color: var(--muted); }
+  .tile .v { font-size: 30px; font-weight: 700; line-height: 1.2; }
+  .tile .s { font-size: 12.5px; color: var(--muted); }
+  .card h2 + .muted { margin-top: -8px; }
+  .mini { min-width: 0; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 4px; background: var(--cart); padding: 8px; border-radius: 10px; }
+  .mc { font-weight: 700; font-size: 10px; color: var(--bay-ink); background: var(--bay); border-radius: 5px; aspect-ratio: 1 / 1.05; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
+  .mc .dot { width: 11px; height: 11px; font-size: 8px; line-height: 11px; }
+  .st-off .dot { border-width: 2px; }
+  @media (max-width: 480px) {
+    .mini { min-width: 0; gap: 3px; padding: 6px; }
+    .mc { font-size: 9px; gap: 2px; }
+    .mc .dot { width: 9px; height: 9px; font-size: 7px; line-height: 9px; }
+  }
+  .heat { min-width: 0; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 2px; }
+  .hc { font-size: 10.5px; font-weight: 600; border-radius: 4px; aspect-ratio: 1 / .8; display: flex; align-items: center; justify-content: center; border: 1px solid var(--line); }
+  .ramp { display: inline-block; width: 120px; height: 10px; border-radius: 5px; vertical-align: middle; background: linear-gradient(to right, color-mix(in srgb, var(--seq) 12%, var(--surface)), var(--seq)); }
+  .rank { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+  .rank div { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .bar-row { display: grid; grid-template-columns: minmax(84px, 130px) minmax(0, 1fr) 36px; align-items: center; gap: 10px; font-size: 14px; }
+  .bar-track { height: 18px; }
+  .bar { height: 18px; background: var(--seq); border-radius: 0 4px 4px 0; min-width: 2px; }
+  .bar-row .v { text-align: right; font-weight: 700; }
+  .matrix td, .matrix th { text-align: center; }
+  .matrix td:first-child, .matrix th:first-child { text-align: left; white-space: nowrap; }
+  .mv { display: inline-block; min-width: 54px; padding: 2px 8px; border-radius: 6px; font-weight: 600; font-size: 13px; }
+  .mv.none { color: var(--muted); font-weight: 400; }
+  .recs { display: flex; flex-direction: column; gap: 4px; }
+  .recs details { border-top: 1px solid var(--line); padding: 8px 0; }
+  .recs details:first-child { border-top: 0; }
+  .recs summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .recs .body { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; }
+  .tag { font-size: 11px; font-weight: 700; border: 1px solid var(--line); color: var(--muted); border-radius: 5px; padding: 1px 6px; margin-left: 6px; }
+  .scrollY { max-height: 420px; overflow: auto; }
+  #tip { position: fixed; z-index: 50; background: var(--fg); color: var(--bg); font-size: 13px; padding: 6px 10px; border-radius: 8px; pointer-events: none; max-width: 240px; transform: translate(-50%, -100%); }
 </style>
 </head>
 <body>
@@ -190,7 +231,22 @@
 
   <!-- 선생님 -->
   <section id="p-teacher" style="display:none; flex-direction:column; gap:20px">
-    <div class="card"><h2>오늘 점검</h2><div class="list" id="t-today"></div></div>
+    <div class="dash-head">
+      <h2 style="font-size:18px">점검 대시보드</h2>
+      <div class="seg" role="radiogroup" aria-label="기간">
+        <label><input type="radio" name="range" value="7" checked><span>7일</span></label>
+        <label><input type="radio" name="range" value="30"><span>30일</span></label>
+        <label><input type="radio" name="range" value="0"><span>전체</span></label>
+      </div>
+    </div>
+    <p class="muted" id="d-load">불러오는 중입니다.</p>
+    <div class="tiles" id="d-tiles"></div>
+    <div class="card" id="d-latest"></div>
+    <div class="card" id="d-heat"></div>
+    <div class="card" id="d-reasons"></div>
+    <div class="card" id="d-days"></div>
+    <div class="card" id="d-students"></div>
+    <div class="card" id="d-records"></div>
     <div class="card"><h2>코인 사용 처리</h2>
       <div class="row">
         <select id="r-student" aria-label="학생"></select>
@@ -200,9 +256,8 @@
       </div>
       <p class="status" id="r-msg" role="status"></p>
     </div>
-    <div class="card"><h2>학생별 코인</h2><div class="scroll"><table id="t-bal"></table></div></div>
-    <div class="card"><h2>최근 점검 기록</h2><div id="t-recent" style="display:flex; flex-direction:column; gap:12px"></div></div>
   </section>
+  <div id="tip" hidden></div>
 </main>
 
 <script>
@@ -472,25 +527,173 @@
   }
   function refreshCoins() { run('getInit').then(function (me) { ME.history = me.history; ME.coins = me.coins; ME.status = me.status; renderCoins(); }).catch(function () { renderCoins(); }); }
 
-  /* ----- 선생님 ----- */
+  /* ----- 선생님 대시보드 ----- */
+  var DASH = null, RANGE = 7;
+  var p2 = function (n) { return String(n).padStart(2, '0'); };
+  function parseYmd(s) { var a = s.split('-'); return new Date(+a[0], +a[1] - 1, +a[2]); }
+  function ymd(d) { return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); }
+  function addDays(s, n) { var d = parseYmd(s); d.setDate(d.getDate() + n); return ymd(d); }
+  function isWeekday(s) { var w = parseYmd(s).getDay(); return w > 0 && w < 6; }
+  function md(s) { var a = s.split('-'); return +a[1] + '/' + +a[2]; }
+  function reasonKey(r) { return String(r).indexOf('기타') === 0 ? '기타' : r; }
+  function offCount(slots) { return (slots.match(/O/g) || []).length; }
+  var CH2ST = { R: 'red', G: 'green', O: 'off' };
+
   function loadTeacher() {
     run('teacherData').then(function (d) {
-      var st = d.status;
-      $('#t-today').innerHTML = ['morning', 'afternoon'].map(function (p) {
-        return '<div class="item"><span>' + PERIOD[p] + ' 점검</span><span>' + (st[p] ? esc(st[p].by) + ' 제출' : '<span class="muted">아직 제출 없음</span>') + '</span></div>';
-      }).join('');
-      var rs = d.students.slice().sort(function (a, b) { return b.total - a.total; });
+      DASH = d; $('#d-load').hidden = true;
       $('#r-student').innerHTML = d.students.map(function (s) { return '<option value="' + esc(s.email) + '">' + esc(s.name) + ' (' + s.total + ')</option>'; }).join('');
-      $('#t-bal').innerHTML = '<tr><th>이름</th><th>당번</th><th class="num">코인</th></tr>' + rs.map(function (s) {
-        return '<tr><td>' + esc(s.name) + '</td><td>' + (s.duty ? '당번' : '') + '</td><td class="num">' + s.total + '</td></tr>';
-      }).join('');
-      $('#t-recent').innerHTML = d.recent.length ? d.recent.map(function (x) {
-        var em = x.empties ? '<div class="chips">' + x.empties.split('; ').map(function (c) { return '<span class="chip">' + esc(c) + '</span>'; }).join('') + '</div>' : '<p class="muted">모든 칸에 크롬북이 연결되어 있습니다.</p>';
-        return '<article class="rec"><div><b>' + esc(x.date) + ' ' + esc(x.period) + '</b> · ' + esc(x.cart) + ' · ' + esc(x.by) + '</div>' + em +
-          '<p class="muted">' + esc(x.when) + ' · ' + esc(x.mode) + (x.edited ? ' · ' + x.edited + '칸 수정' : '') + (x.coin ? ' · 코인 ' + x.coin : '') + '</p></article>';
-      }).join('') : '<p class="empty">아직 점검 기록이 없습니다.</p>';
-    }).catch(function (e) { $('#t-recent').innerHTML = '<p class="muted">' + esc(errText(e)) + '</p>'; });
+      renderDash();
+    }).catch(function (e) { $('#d-load').hidden = false; $('#d-load').textContent = errText(e); });
   }
+  document.querySelectorAll('input[name="range"]').forEach(function (r) {
+    r.addEventListener('change', function () { RANGE = Number(r.value); if (DASH) renderDash(); });
+  });
+
+  function renderDash() {
+    var today = DASH.today;
+    var start = RANGE ? addDays(today, -(RANGE - 1)) : (DASH.recent.length ? DASH.recent[0].date : today);
+    var recs = DASH.recent.filter(function (r) { return r.date >= start; });
+    var label = RANGE ? '최근 ' + RANGE + '일' : '전체 기간';
+    renderTiles(recs, today, start);
+    renderLatest();
+    renderHeat(recs, label);
+    renderReasons(recs, label);
+    renderDays(recs, today, start);
+    renderStudents(recs, label);
+    renderRecs(recs);
+  }
+
+  function tile(l, v, s) { return '<div class="tile"><p class="l">' + esc(l) + '</p><p class="v">' + esc(v) + '</p><p class="s">' + esc(s) + '</p></div>'; }
+
+  function renderTiles(recs, today, start) {
+    var tm = recs.some(function (r) { return r.date === today && r.period === 'morning'; });
+    var ta = recs.some(function (r) { return r.date === today && r.period === 'afternoon'; });
+    var last = DASH.recent[DASH.recent.length - 1];
+    var seen = {}, exp = 0, d;
+    recs.forEach(function (r) { if (isWeekday(r.date)) seen[r.date + r.period] = 1; });
+    for (d = start; d <= today; d = addDays(d, 1)) if (isWeekday(d)) exp += 2;
+    var got = Object.keys(seen).length;
+    var ed = recs.filter(function (r) { return r.edited != null; });
+    var avg = ed.length ? (ed.reduce(function (a, r) { return a + r.edited; }, 0) / ed.length) : null;
+    $('#d-tiles').innerHTML =
+      tile('오늘 제출', (tm + ta) + ' / 2', '아침 ' + (tm ? '제출' : '미제출') + ' · 방과 후 ' + (ta ? '제출' : '미제출')) +
+      tile('마지막 점검의 빈 칸', last ? offCount(last.slots) + '칸' : '—', last ? md(last.date) + ' ' + (last.period === 'morning' ? '아침' : '방과 후') : '기록 없음') +
+      tile('제출률 (평일 기준)', exp ? Math.round(got / exp * 100) + '%' : '—', exp ? got + ' / ' + exp + '회 제출' : '기간 내 평일 없음') +
+      tile('학생이 고친 칸', avg == null ? '—' : avg.toFixed(1) + '칸', '제출 1회당 평균 (AI 판정 대비)');
+  }
+
+  function miniGrid(slots, reasons) {
+    return '<div class="scroll"><div class="mini">' + slots.split('').map(function (c, i) {
+      var st = CH2ST[c] || 'off';
+      var tip = (i + 1) + '번 · ' + ST[st] + (st === 'off' && reasons[i + 1] ? ' · ' + reasons[i + 1] : '');
+      return '<span class="mc st-' + st + '" data-tip="' + esc(tip) + '" tabindex="0" aria-label="' + esc(tip) + '"><span>' + (i + 1) + '</span><i class="dot"></i></span>';
+    }).join('') + '</div></div>';
+  }
+  function reasonChips(reasons) {
+    var ks = Object.keys(reasons).sort(function (a, b) { return a - b; });
+    return ks.length ? '<div class="chips">' + ks.map(function (k) { return '<span class="chip">' + esc(k) + '번 · ' + esc(reasons[k]) + '</span>'; }).join('') + '</div>' : '<p class="muted">모든 칸에 크롬북이 연결되어 있습니다.</p>';
+  }
+  var LEGEND = '<div class="legend"><span><i class="dot" style="background:var(--red)"></i>충전 중</span><span><i class="dot" style="background:var(--green)">✓</i>충전 완료</span><span><i class="dot" style="border:2px solid var(--offc)"></i>비어 있음</span></div>';
+
+  function renderLatest() {
+    var el = $('#d-latest'), last = DASH.recent[DASH.recent.length - 1];
+    if (!last) { el.innerHTML = '<h2>가장 최근 보관함</h2><p class="empty">아직 제출된 점검이 없습니다.</p>'; return; }
+    el.innerHTML = '<h2>가장 최근 보관함</h2><p class="muted">' + esc(md(last.date) + ' ' + (last.period === 'morning' ? '아침' : '방과 후') + ' · ' + last.by + ' 제출 · 비어 있는 칸 ' + offCount(last.slots) + '개') + '</p>' +
+      LEGEND + miniGrid(last.slots, last.reasons) + reasonChips(last.reasons);
+  }
+
+  function renderHeat(recs, label) {
+    var n = recs.length, cnt = Array(36).fill(0), why = Array.from({ length: 36 }, function () { return {}; });
+    recs.forEach(function (r) {
+      for (var i = 0; i < 36; i++) if (r.slots.charAt(i) === 'O') {
+        cnt[i]++; var w = r.reasons[i + 1];
+        if (w) { var k = reasonKey(w); why[i][k] = (why[i][k] || 0) + 1; }
+      }
+    });
+    var cells = cnt.map(function (c, i) {
+      var rate = n ? c / n : 0, pct = Math.round(12 + rate * 88);
+      var st = c ? 'background:color-mix(in srgb, var(--seq) ' + pct + '%, var(--surface));color:' + (pct >= 55 ? '#fff' : 'var(--fg)') : 'background:var(--bg);color:var(--muted)';
+      var tip = (i + 1) + '번 · ' + c + '/' + n + '회 비어 있음 (' + Math.round(rate * 100) + '%)';
+      return '<span class="hc" style="' + st + '" data-tip="' + esc(tip) + '" tabindex="0" aria-label="' + esc(tip) + '">' + (i + 1) + '</span>';
+    }).join('');
+    var top = cnt.map(function (c, i) { return { i: i, c: c }; }).filter(function (x) { return x.c > 0; })
+      .sort(function (a, b) { return b.c - a.c || a.i - b.i; }).slice(0, 5);
+    var list = top.length ? '<div class="rank">' + top.map(function (x) {
+      var rs = Object.keys(why[x.i]).sort(function (a, b) { return why[x.i][b] - why[x.i][a]; })[0];
+      return '<div><b>' + (x.i + 1) + '번</b><span>' + x.c + '/' + n + '회 비어 있음 (' + Math.round(x.c / n * 100) + '%)' + (rs ? ' · 주된 사유 ' + esc(rs) : '') + '</span></div>';
+    }).join('') + '</div>' : '<p class="muted">이 기간에는 비어 있던 칸이 없습니다.</p>';
+    $('#d-heat').innerHTML = '<h2>자주 비는 칸</h2><p class="muted">' + esc(label) + ' · 점검 ' + n + '회 중 불이 꺼져 있던 비율 · 칸 위에 올리면 횟수가 보입니다.</p>' +
+      '<div class="scroll"><div class="heat">' + cells + '</div></div>' +
+      '<p class="muted">적음 <span class="ramp"></span> 많음</p>' + list;
+  }
+
+  function renderReasons(recs, label) {
+    var t = {};
+    recs.forEach(function (r) { Object.keys(r.reasons).forEach(function (k) { var rk = reasonKey(r.reasons[k]); t[rk] = (t[rk] || 0) + 1; }); });
+    var ks = Object.keys(t).sort(function (a, b) { return t[b] - t[a]; });
+    var max = ks.length ? t[ks[0]] : 1;
+    $('#d-reasons').innerHTML = '<h2>비어 있던 이유</h2><p class="muted">' + esc(label) + ' · 칸 단위로 센 횟수</p>' + (ks.length ?
+      '<div class="list">' + ks.map(function (k) {
+        return '<div class="bar-row"><span>' + esc(k) + '</span><span class="bar-track"><span class="bar" style="display:block;width:' + Math.round(t[k] / max * 100) + '%" data-tip="' + esc(k + ' · ' + t[k] + '회') + '"></span></span><span class="v">' + t[k] + '</span></div>';
+      }).join('') + '</div>' : '<p class="empty">이 기간에 적힌 사유가 없습니다.</p>');
+  }
+
+  function renderDays(recs, today, start) {
+    var by = {}, mx = 1;
+    recs.forEach(function (r) { by[r.date + r.period] = r; mx = Math.max(mx, offCount(r.slots)); });
+    var rows = [], d;
+    for (d = today; d >= start && rows.length < 60; d = addDays(d, -1)) {
+      var has = by[d + 'morning'] || by[d + 'afternoon'];
+      if (!isWeekday(d) && !has) continue;
+      rows.push(d);
+    }
+    function cell(d, p) {
+      var r = by[d + p];
+      if (!r) return '<span class="mv none">' + (d === today ? '—' : '미제출') + '</span>';
+      var c = offCount(r.slots), pct = c ? Math.round(12 + c / mx * 88) : 0;
+      var st = c ? 'background:color-mix(in srgb, var(--seq) ' + pct + '%, var(--surface));color:' + (pct >= 55 ? '#fff' : 'var(--fg)') : 'background:var(--bg)';
+      return '<span class="mv" style="' + st + '" data-tip="' + esc(r.by + ' · 빈 칸 ' + c + '개') + '" tabindex="0">' + c + '칸</span>';
+    }
+    $('#d-days').innerHTML = '<h2>날짜별 제출 현황</h2><p class="muted">칸 안의 숫자는 비어 있던 칸 수입니다. 평일에 제출이 없으면 미제출로 표시합니다.</p>' +
+      (rows.length ? '<div class="scrollY"><table class="matrix"><tr><th>날짜</th><th>아침</th><th>방과 후</th></tr>' + rows.map(function (d) {
+        return '<tr><td>' + esc(md(d)) + '</td><td>' + cell(d, 'morning') + '</td><td>' + cell(d, 'afternoon') + '</td></tr>';
+      }).join('') + '</table></div>' : '<p class="empty">표시할 날짜가 없습니다.</p>');
+  }
+
+  function renderStudents(recs, label) {
+    var sub = {}, earn = {};
+    recs.forEach(function (r) { sub[r.email] = (sub[r.email] || 0) + 1; earn[r.email] = (earn[r.email] || 0) + r.coin; });
+    var rows = DASH.students.slice().sort(function (a, b) { return (sub[b.email] || 0) - (sub[a.email] || 0) || a.name.localeCompare(b.name); });
+    $('#d-students').innerHTML = '<h2>학생별</h2><p class="muted">' + esc(label) + ' 기준 제출 횟수와 받은 코인, 그리고 현재 코인</p>' +
+      '<div class="scroll"><table><tr><th>이름</th><th class="num">제출</th><th class="num">받은 코인</th><th class="num">현재 코인</th></tr>' +
+      rows.map(function (s) { return '<tr><td>' + esc(s.name) + (s.duty ? ' <span class="tag">당번</span>' : '') + '</td><td class="num">' + (sub[s.email] || 0) + '</td><td class="num">' + (earn[s.email] || 0) + '</td><td class="num">' + s.total + '</td></tr>'; }).join('') + '</table></div>';
+  }
+
+  function renderRecs(recs) {
+    var list = recs.slice().reverse().slice(0, 20);
+    $('#d-records').innerHTML = '<h2>제출 기록</h2><p class="muted">최근 20건 · 눌러서 펼치면 36칸 상태가 보입니다.</p>' + (list.length ? '<div class="recs">' + list.map(function (r) {
+      return '<details><summary><b>' + esc(md(r.date) + ' ' + (r.period === 'morning' ? '아침' : '방과 후')) + '</b><span>' + esc(r.by) + '</span><span class="muted">빈 칸 ' + offCount(r.slots) + '개' + (r.coin ? ' · 코인 ' + r.coin : '') + '</span></summary>' +
+        '<div class="body">' + miniGrid(r.slots, r.reasons) + reasonChips(r.reasons) +
+        '<p class="muted">' + esc(r.when + ' · ' + r.mode + (r.edited ? ' · 학생이 ' + r.edited + '칸 수정' : '')) + '</p></div></details>';
+    }).join('') + '</div>' : '<p class="empty">아직 제출된 점검이 없습니다.</p>');
+  }
+
+  /* 툴팁 (마우스 올림, 키보드 포커스, 터치) */
+  (function () {
+    var tip = $('#tip');
+    function show(el) {
+      tip.textContent = el.dataset.tip; tip.hidden = false;
+      var r = el.getBoundingClientRect();
+      tip.style.left = Math.min(Math.max(r.left + r.width / 2, 120), window.innerWidth - 120) + 'px';
+      tip.style.top = Math.max(r.top - 6, 40) + 'px';
+    }
+    document.addEventListener('mouseover', function (e) { var t = e.target.closest('[data-tip]'); if (t) show(t); else tip.hidden = true; });
+    document.addEventListener('focusin', function (e) { var t = e.target.closest('[data-tip]'); if (t) show(t); else tip.hidden = true; });
+    document.addEventListener('focusout', function () { tip.hidden = true; });
+    document.addEventListener('click', function (e) { var t = e.target.closest('[data-tip]'); if (t) show(t); else tip.hidden = true; });
+  })();
+
   $('#r-go').onclick = function () {
     var msg = $('#r-msg'); msg.textContent = '처리하는 중입니다.';
     run('redeem', $('#r-student').value, $('#r-amount').value, $('#r-memo').value).then(function (r) {

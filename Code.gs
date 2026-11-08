@@ -254,11 +254,24 @@ function requireTeacher_() {
   return r;
 }
 
+// "7번: 수리 맡김; 12번: 기타: 충전기 분실" → { "7": "수리 맡김", "12": "기타: 충전기 분실" }
+function parseEmpties_(s) {
+  var out = {};
+  String(s || '').split(/;\s+(?=\d+번: )/).forEach(function (part) {
+    var m = part.match(/^(\d+)번: ([\s\S]*)$/);
+    if (m) out[m[1]] = m[2];
+  });
+  return out;
+}
+
 function teacherData() {
   requireTeacher_();
-  var recs = rows_('records').slice(-30).reverse().map(function (r) {
-    return { when: fmtWhen_(r[0]), date: fmtDate_(r[1]), period: String(r[2]), cart: String(r[3]), by: String(r[5] || r[4]),
-             empties: String(r[7] || ''), edited: r[9] === '' ? null : Number(r[9]), mode: String(r[10]), coin: Number(r[11]) || 0 };
+  // 오래된 순서로, 최근 600건까지 (대시보드가 화면에서 기간별로 걸러 씁니다)
+  var recs = rows_('records').slice(-600).map(function (r) {
+    return { when: fmtWhen_(r[0]), date: fmtDate_(r[1]), period: r[2] === PERIOD_KO.morning ? 'morning' : 'afternoon',
+             cart: String(r[3]), email: String(r[4]).trim().toLowerCase(), by: String(r[5] || r[4]),
+             slots: String(r[6] || ''), reasons: parseEmpties_(r[7]),
+             edited: r[9] === '' ? null : Number(r[9]), mode: String(r[10]), coin: Number(r[11]) || 0 };
   });
   var totals = {};
   rows_('ledger').forEach(function (r) {
@@ -269,7 +282,7 @@ function teacherData() {
     var e = String(r[0]).trim().toLowerCase();
     return { email: e, name: String(r[1] || e), duty: isOn_(r[2]), total: totals[e] || 0 };
   });
-  return { status: todayStatus_(), recent: recs, students: students };
+  return { today: today_(), status: todayStatus_(), recent: recs, students: students };
 }
 
 function redeem(email, amount, memo) {
