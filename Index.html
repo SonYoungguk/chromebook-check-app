@@ -332,7 +332,7 @@
     return new Promise(function (res, rej) {
       var url = URL.createObjectURL(file), img = new Image();
       img.onload = function () {
-        var k = Math.min(1, 1400 / Math.max(img.naturalWidth, img.naturalHeight));
+        var k = Math.min(1, 1200 / Math.max(img.naturalWidth, img.naturalHeight));
         var w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
         var c = document.createElement('canvas'); c.width = w; c.height = h;
         c.getContext('2d').drawImage(img, 0, 0, w, h);
@@ -365,7 +365,9 @@
   function handlePhoto(file) {
     ['#s2', '#s3', '#s4'].forEach(function (s) { $(s).hidden = true; });
     S.busy = true; $('#photo-label').style.opacity = .5;
-    status('사진을 읽고 있습니다. 10~20초 걸릴 수 있어요.');
+    var t0 = Date.now();
+    status('사진을 읽고 있습니다.');
+    var tick = setInterval(function () { status('AI가 사진을 보고 있습니다… ' + Math.round((Date.now() - t0) / 1000) + '초'); }, 1000);
     readPhoto(file).then(function (p) {
       var pv = $('#preview'); pv.src = p.url; pv.hidden = false;
       return run('analyze', p.b64);
@@ -382,7 +384,7 @@
       }
     }).catch(function (e) {
       status(errText(e), true);
-    }).then(function () { S.busy = false; $('#photo-label').style.opacity = 1; });
+    }).then(function () { clearInterval(tick); S.busy = false; $('#photo-label').style.opacity = 1; });
   }
 
   /* ----- 결과 확인 ----- */

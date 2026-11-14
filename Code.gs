@@ -159,7 +159,8 @@ function analyze(b64) {
 
   var body = {
     contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: b64 } }] }],
-    generationConfig: { responseMimeType: 'application/json', temperature: 0 }
+    // thinkingBudget 0: 답하기 전에 오래 생각하지 않게 해서 속도를 높입니다. 모델이 이 설정을 거부하면(400) 빼고 다시 시도합니다.
+    generationConfig: { responseMimeType: 'application/json', temperature: 0, thinkingConfig: { thinkingBudget: 0 } }
   };
   // 일시적인 오류(429 사용량 초과, 5xx 서버 혼잡)는 잠시 기다렸다가 최대 3번까지 다시 시도합니다.
   // 404·400 같은 설정 문제는 다시 해도 소용없으므로 바로 다음 모델로 넘어갑니다.
@@ -167,7 +168,7 @@ function analyze(b64) {
   var models = [model];
   var fb = props.getProperty('GEMINI_MODEL_FALLBACK');
   if (fb && fb !== model) models.push(fb);
-  var resp = null, code = 0;
+  var resp = null, code = 0, t0 = Date.now();
   outer:
   for (var mi = 0; mi < models.length; mi++) {
     model = models[mi];
@@ -183,6 +184,12 @@ function analyze(b64) {
         resp = null; code = 0;
       }
       if (code === 200) break outer;
+      if (code === 400 && body.generationConfig.thinkingConfig) {
+        console.error('모델 ' + model + ' 이(가) thinking 설정을 거부해 빼고 다시 시도합니다: ' + (resp ? resp.getContentText().slice(0, 200) : ''));
+        delete body.generationConfig.thinkingConfig;
+        attempt--;
+        continue;
+      }
       // 실행 기록(Apps Script 왼쪽 '실행')에서 원인을 볼 수 있습니다. 404는 모델 이름, 400/403은 키나 권한 문제인 경우가 많습니다.
       console.error('Gemini HTTP ' + code + ' (모델 ' + model + ', 시도 ' + (attempt + 1) + '): ' + (resp ? resp.getContentText().slice(0, 300) : '연결 실패'));
       var transient = code === 0 || code === 429 || code >= 500;
@@ -197,6 +204,7 @@ function analyze(b64) {
       : 'AI 분석에 실패했습니다. (오류 ' + code + ')' };
   }
 
+  console.log('Gemini 소요 시간: ' + (Date.now() - t0) + 'ms (모델 ' + model + ')');
   var parsed, text = '';
   try {
     var data = JSON.parse(resp.getContentText());
