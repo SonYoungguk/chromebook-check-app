@@ -13,7 +13,7 @@ var CONFIG = {
   GEMINI_MODEL: 'gemini-2.5-flash',
   REQUIRE_AI_FOR_COIN: true,   // true: 사진 분석이 성공한 제출만 코인 지급
   MAX_UNCERTAIN: 12,           // AI가 확신 못 한 칸이 이보다 많으면 다시 찍게 함
-  MAX_ANALYZE_PER_HOUR: 10,    // 한 사람이 한 시간에 사진 분석을 요청할 수 있는 횟수
+  MAX_ANALYZE_PER_HOUR: 20,    // 한 사람이 한 시간에 사진 분석에 성공할 수 있는 횟수 (실패한 요청은 세지 않음, 교사는 제한 없음)
   // [코인 수, 가중치] — 1~5개, 많이 나올수록 확률이 낮습니다. (35·30·20·10·5 = 100%)
   COIN_TABLE: [[1, 35], [2, 30], [3, 20], [4, 10], [5, 5]],
   REASONS: ['수업 중 사용 중', '수리 맡김', '분실·행방 확인 중', '충전기 고장', '집에 가져감', '기타']
@@ -136,8 +136,9 @@ function analyze(b64) {
   var cache = CacheService.getScriptCache();
   var rlKey = 'rl:' + r.email;
   var used = Number(cache.get(rlKey) || 0);
-  if (used >= CONFIG.MAX_ANALYZE_PER_HOUR) return { ok: false, manual: true, message: '분석 요청이 너무 많습니다. 잠시 뒤 다시 시도해 주세요.' };
-  cache.put(rlKey, String(used + 1), 3600);
+  if (!r.teacher && used >= CONFIG.MAX_ANALYZE_PER_HOUR) {
+    return { ok: false, manual: true, message: '한 시간에 사진 분석은 ' + CONFIG.MAX_ANALYZE_PER_HOUR + '번까지 할 수 있습니다. 잠시 뒤 다시 시도해 주세요.' };
+  }
 
   var props = PropertiesService.getScriptProperties();
   var key = props.getProperty('GEMINI_API_KEY');
@@ -204,6 +205,7 @@ function analyze(b64) {
       : 'AI 분석에 실패했습니다. (오류 ' + code + ')' };
   }
 
+  cache.put(rlKey, String(used + 1), 3600);
   console.log('Gemini 소요 시간: ' + (Date.now() - t0) + 'ms (모델 ' + model + ')');
   var parsed, text = '';
   try {
