@@ -50,6 +50,41 @@
 3. 제출해서 점검기록과 코인내역 탭에 행이 생기는지 봅니다.
 4. 시험이 끝나면 시험 행은 지우고, 본인 이름은 당번에서 뺍니다.
 
+## 코드 업데이트 자동화 (clasp, 선택)
+코드가 바뀔 때마다 붙여 넣고 새 버전을 배포하는 대신, **명령 한 줄**로 올릴 수 있습니다. 한 번만 설정하면 됩니다.
+웹 앱 주소(QR코드)는 바뀌지 않습니다.
+
+### 처음 한 번만
+1. **Node.js 20 이상**을 설치합니다(nodejs.org).
+2. 이 저장소를 받고 폴더에서 설치합니다.
+   ```bash
+   git clone https://github.com/SonYoungguk/chromebook-check-app
+   cd chromebook-check-app
+   npm install
+   ```
+3. 브라우저에서 script.google.com/home/usersettings 를 열어 **Google Apps Script API**를 **켭니다.**
+4. 학교 계정으로 로그인합니다.
+   ```bash
+   npm run login
+   ```
+5. **스크립트 ID**를 연결합니다. Apps Script 왼쪽 톱니바퀴(프로젝트 설정)의 **ID**를 복사하고, `.clasp.json.example`을 `.clasp.json`으로 복사한 뒤 `scriptId` 값에 붙여 넣습니다.
+6. **배포 ID**를 저장합니다. Apps Script의 **배포 → 배포 관리**에서 웹 앱 배포의 ID를 복사해 `.deployment-id` 파일에 한 줄로 저장합니다. 또는 `npm run release`를 한 번 실행하면 배포 목록이 나옵니다. `@HEAD`는 테스트용이라 쓰지 않습니다.
+
+`.clasp.json`과 `.deployment-id`는 `.gitignore`에 들어 있어 GitHub에 올라가지 않습니다.
+
+### 코드를 고칠 때마다
+```bash
+git pull
+npm run release
+```
+`release`는 코드를 앱스 스크립트에 올리고, 기존 웹 앱 배포를 새 버전으로 갱신합니다.
+코드만 올리고 배포는 나중에 하려면 `npm run push`를 씁니다.
+
+### 알아 둘 점
+- 올릴 때 앱스 스크립트 쪽 파일은 `Code.gs`, `Index.html`, `appsscript.json`으로 **통째로 덮어써집니다.** 편집기에서 직접 고친 내용이나 `코드.gs` 같은 기존 파일은 사라지므로, 코드는 저장소에서만 고치세요.
+- 스크립트 속성(`GEMINI_API_KEY`)과 시트 데이터는 건드리지 않습니다.
+- 학교 구글 관리자가 앱스 스크립트 API나 외부 앱 로그인을 막아 두었으면 3~4번 단계에서 실패합니다. 이 경우에는 기존처럼 붙여 넣고 **배포 → 배포 관리 → 새 버전**으로 올리면 됩니다.
+
 ## 운영
 
 ### 코인 규칙 (Code.gs 위쪽 `CONFIG`에서 바꿉니다)

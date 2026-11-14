@@ -1,0 +1,13 @@
+{
+  "name": "chromebook-check-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "크롬북 충전함 점검 앱 (구글 앱스 스크립트)",
+  "scripts": {
+    "login": "clasp login",
+    "push": "clasp push -f",
+    "release": "node scripts/release.js"
+  },
+  "engines": { "node": ">=20" },
+  "devDependencies": { "@google/clasp": "3.4.1" }
+}
