@@ -146,10 +146,15 @@ function analyze(b64) {
 
   var prompt = [
     '이 사진은 학교 크롬북 충전 보관함을 찍은 것입니다. 보관함에는 12칸씩 3줄, 모두 36칸이 있습니다.',
-    '각 칸에는 충전 표시등이 있습니다. 빨간불은 충전 중(red), 초록불은 충전 완료(green), 불이 꺼져 있으면 크롬북이 연결되지 않은 빈 칸(off)입니다.',
+    '각 칸에는 충전 표시등이 있습니다. 판정 기준:',
+    '- red: 크롬북이 꽂혀 있고 표시등이 빨간색 (충전 중)',
+    '- green: 크롬북이 꽂혀 있고 표시등이 초록색 (충전 완료)',
+    '- off: 표시등이 꺼져 있거나 어두운 회색이고, 보통 칸 안에 크롬북이 보이지 않는 빈 칸',
+    '보관함에는 빈 칸이 있을 수도, 하나도 없을 수도 있습니다. 표시등이 꺼진 칸이나 크롬북이 없는 칸을 빠뜨리지 마세요.',
     '칸 번호는 맨 윗줄 왼쪽에서 오른쪽으로 1~12, 가운데 줄 13~24, 아랫줄 25~36입니다. 사진에 번호가 보여도 위치를 기준으로 세어 주세요.',
-    '36칸 각각의 표시등 상태를 판정하세요. 흐리거나 가려져서 확신이 없는 칸은 uncertain에 번호(1~36)로 적으세요.',
-    '다른 말 없이 JSON 객체 하나만 답하세요. 형식: {"slots": ["red","green","off", ...정확히 36개], "uncertain": [7, 20], "note": "한 문장 메모"}'
+    '한 줄씩, 왼쪽 칸부터 차례로 하나도 건너뛰지 말고 판정하세요. 흐리거나 가려져서 확신이 없는 칸은 uncertain에 번호(1~36)로 적으세요.',
+    '다른 말 없이 JSON 객체 하나만 답하세요. 형식: {"rows": [[윗줄 12개], [가운데 줄 12개], [아랫줄 12개]], "uncertain": [7, 20], "note": "한 문장 메모"}',
+    '각 줄은 red, green, off 중 하나인 문자열 정확히 12개입니다.'
   ].join('\n');
 
   var body = {
@@ -166,25 +171,29 @@ function analyze(b64) {
     console.error('Gemini fetch failed: ' + e);
     return { ok: false, manual: true, message: 'AI 분석 서버에 연결하지 못했습니다.' };
   }
-  if (resp.getResponseCode() !== 200) {
-    console.error('Gemini HTTP ' + resp.getResponseCode() + ': ' + resp.getContentText().slice(0, 500));
-    return { ok: false, manual: true, message: 'AI 분석에 실패했습니다.' };
+  var code = resp.getResponseCode();
+  if (code !== 200) {
+    // 실행 기록(Apps Script 왼쪽 '실행')에서 원인을 볼 수 있습니다. 404는 모델 이름, 400/403은 키나 권한 문제인 경우가 많습니다.
+    console.error('Gemini HTTP ' + code + ' (모델 ' + model + '): ' + resp.getContentText().slice(0, 500));
+    return { ok: false, manual: true, message: 'AI 분석에 실패했습니다. (오류 ' + code + ')' };
   }
 
-  var parsed;
+  var parsed, text = '';
   try {
     var data = JSON.parse(resp.getContentText());
-    var text = data.candidates[0].content.parts.map(function (p) { return p.text || ''; }).join('');
+    text = data.candidates[0].content.parts.map(function (p) { return p.text || ''; }).join('');
     var m = text.match(/\{[\s\S]*\}/);
     parsed = JSON.parse(m ? m[0] : text);
   } catch (e) {
-    console.error('Gemini parse failed: ' + e);
+    console.error('Gemini parse failed: ' + e + ' / 응답: ' + resp.getContentText().slice(0, 500));
     return { ok: false, manual: true, message: 'AI 응답을 읽지 못했습니다.' };
   }
+  console.log('Gemini 응답 (모델 ' + model + '): ' + text.slice(0, 800));
   var slots = parsed && parsed.slots;
+  if (!slots && parsed && Array.isArray(parsed.rows)) slots = [].concat.apply([], parsed.rows);
   var valid = Array.isArray(slots) && slots.length === CONFIG.SLOTS &&
     slots.every(function (v) { return v === 'red' || v === 'green' || v === 'off'; });
-  if (!valid) return { ok: false, manual: true, message: 'AI가 36칸을 모두 읽지 못했습니다.' };
+  if (!valid) return { ok: false, manual: true, message: 'AI가 36칸을 모두 읽지 못했습니다. (읽은 칸 ' + (Array.isArray(slots) ? slots.length : 0) + '개)' };
 
   var unc = (Array.isArray(parsed.uncertain) ? parsed.uncertain : [])
     .map(function (n) { return Number(n) - 1; })
