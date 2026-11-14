@@ -161,21 +161,40 @@ function analyze(b64) {
     contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: b64 } }] }],
     generationConfig: { responseMimeType: 'application/json', temperature: 0 }
   };
-  var resp;
-  try {
-    resp = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
-      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-      headers: { 'x-goog-api-key': key }, payload: JSON.stringify(body)
-    });
-  } catch (e) {
-    console.error('Gemini fetch failed: ' + e);
-    return { ok: false, manual: true, message: 'AI 분석 서버에 연결하지 못했습니다.' };
+  // 일시적인 오류(429 사용량 초과, 5xx 서버 혼잡)는 잠시 기다렸다가 최대 3번까지 다시 시도합니다.
+  // 404·400 같은 설정 문제는 다시 해도 소용없으므로 바로 다음 모델로 넘어갑니다.
+  // 스크립트 속성 GEMINI_MODEL_FALLBACK 에 다른 모델 이름을 넣으면 그 모델로도 시도합니다.
+  var models = [model];
+  var fb = props.getProperty('GEMINI_MODEL_FALLBACK');
+  if (fb && fb !== model) models.push(fb);
+  var resp = null, code = 0;
+  outer:
+  for (var mi = 0; mi < models.length; mi++) {
+    model = models[mi];
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        resp = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
+          method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+          headers: { 'x-goog-api-key': key }, payload: JSON.stringify(body)
+        });
+        code = resp.getResponseCode();
+      } catch (e) {
+        console.error('Gemini fetch failed (모델 ' + model + '): ' + e);
+        resp = null; code = 0;
+      }
+      if (code === 200) break outer;
+      // 실행 기록(Apps Script 왼쪽 '실행')에서 원인을 볼 수 있습니다. 404는 모델 이름, 400/403은 키나 권한 문제인 경우가 많습니다.
+      console.error('Gemini HTTP ' + code + ' (모델 ' + model + ', 시도 ' + (attempt + 1) + '): ' + (resp ? resp.getContentText().slice(0, 300) : '연결 실패'));
+      var transient = code === 0 || code === 429 || code >= 500;
+      if (!transient) break;
+      if (attempt < 2) Utilities.sleep(1500 * (attempt + 1));
+    }
   }
-  var code = resp.getResponseCode();
   if (code !== 200) {
-    // 실행 기록(Apps Script 왼쪽 '실행')에서 원인을 볼 수 있습니다. 404는 모델 이름, 400/403은 키나 권한 문제인 경우가 많습니다.
-    console.error('Gemini HTTP ' + code + ' (모델 ' + model + '): ' + resp.getContentText().slice(0, 500));
-    return { ok: false, manual: true, message: 'AI 분석에 실패했습니다. (오류 ' + code + ')' };
+    var busy = code === 0 || code === 429 || code >= 500;
+    return { ok: false, manual: true, message: busy
+      ? 'AI 서버가 지금 바쁩니다. 잠시 뒤 다시 올려 주세요. (오류 ' + (code || '연결 실패') + ')'
+      : 'AI 분석에 실패했습니다. (오류 ' + code + ')' };
   }
 
   var parsed, text = '';
