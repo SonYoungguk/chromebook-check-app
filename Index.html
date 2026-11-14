@@ -558,7 +558,7 @@
     renderTiles(recs, today, start);
     renderLatest();
     renderHeat(recs, label);
-    renderReasons(recs, label);
+    renderReasonBars(recs, label);
     renderDays(recs, today, start);
     renderStudents(recs, label);
     renderRecs(recs);
@@ -628,7 +628,7 @@
       '<p class="muted">적음 <span class="ramp"></span> 많음</p>' + list;
   }
 
-  function renderReasons(recs, label) {
+  function renderReasonBars(recs, label) {
     var t = {};
     recs.forEach(function (r) { Object.keys(r.reasons).forEach(function (k) { var rk = reasonKey(r.reasons[k]); t[rk] = (t[rk] || 0) + 1; }); });
     var ks = Object.keys(t).sort(function (a, b) { return t[b] - t[a]; });
