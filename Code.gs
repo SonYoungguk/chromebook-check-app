@@ -313,3 +313,35 @@ function redeem(email, amount, memo) {
     lock.releaseLock();
   }
 }
+
+/* ---------- 진단용: Gemini 연결 확인 ---------- */
+// Apps Script 편집기에서 함수 목록에 checkGemini 를 고르고 실행한 뒤, 아래 '실행 로그'를 보세요.
+// 키가 맞는지, 지금 설정된 모델 이름을 쓸 수 있는지, 쓸 수 있는 모델 이름이 무엇인지 알려 줍니다.
+function checkGemini() {
+  var props = PropertiesService.getScriptProperties();
+  var key = props.getProperty('GEMINI_API_KEY');
+  var model = props.getProperty('GEMINI_MODEL') || CONFIG.GEMINI_MODEL;
+  if (!key) { Logger.log('GEMINI_API_KEY 스크립트 속성이 없습니다. 프로젝트 설정 → 스크립트 속성에서 추가하세요.'); return; }
+  Logger.log('현재 모델 설정: ' + model);
+
+  var r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', {
+    headers: { 'x-goog-api-key': key }, muteHttpExceptions: true
+  });
+  Logger.log('① 모델 목록 요청: HTTP ' + r.getResponseCode());
+  if (r.getResponseCode() !== 200) {
+    Logger.log('키가 잘못되었거나 이 계정에서 Gemini API를 쓸 수 없습니다. 응답: ' + r.getContentText().slice(0, 400));
+    return;
+  }
+  var names = (JSON.parse(r.getContentText()).models || [])
+    .filter(function (m) { return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0; })
+    .map(function (m) { return String(m.name).replace(/^models\//, ''); });
+  Logger.log('사진 분석에 쓸 수 있는 모델 후보(generateContent 지원): ' + names.join(', '));
+  Logger.log(names.indexOf(model) >= 0 ? '→ 현재 모델 ' + model + ' 은(는) 목록에 있습니다.'
+    : '→ 현재 모델 ' + model + ' 은(는) 목록에 없습니다. 위 목록의 flash 계열 이름을 스크립트 속성 GEMINI_MODEL 에 넣어 보세요.');
+
+  var t = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true, headers: { 'x-goog-api-key': key },
+    payload: JSON.stringify({ contents: [{ parts: [{ text: '숫자 7만 답하세요.' }] }] })
+  });
+  Logger.log('② 현재 모델로 짧은 질문: HTTP ' + t.getResponseCode() + ' / ' + t.getContentText().slice(0, 300));
+}
