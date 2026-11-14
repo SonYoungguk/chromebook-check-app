@@ -1,0 +1,53 @@
+{
+  "설명": "윗줄 왼쪽에서 오른쪽으로 1~12, 가운데 줄 13~24, 아랫줄 25~36",
+  "slots": [
+    "red",
+    "green",
+    "green",
+    "green",
+    "off",
+    "green",
+    "red",
+    "off",
+    "off",
+    "green",
+    "red",
+    "red",
+    "red",
+    "green",
+    "red",
+    "red",
+    "off",
+    "green",
+    "green",
+    "green",
+    "red",
+    "green",
+    "red",
+    "red",
+    "red",
+    "red",
+    "red",
+    "red",
+    "red",
+    "red",
+    "green",
+    "off",
+    "red",
+    "red",
+    "red",
+    "red"
+  ],
+  "빈 칸 번호": [
+    5,
+    8,
+    9,
+    17,
+    32
+  ],
+  "요약": {
+    "충전 중": 20,
+    "충전 완료": 11,
+    "비어 있음": 5
+  }
+}
