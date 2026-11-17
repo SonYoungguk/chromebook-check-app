@@ -6,7 +6,7 @@
  */
 
 var CONFIG = {
-  CART_NAME: '1번 보관함',
+  CART_NAME: '1번 보관함',   // 보관함 시트가 비어 있을 때 쓰는 기본 이름
   SLOTS: 36,
   // AI 스튜디오에서 지금 쓸 수 있는 모델 이름을 확인해 바꾸세요.
   // 스크립트 속성 GEMINI_MODEL 을 넣으면 그 값이 우선합니다.
@@ -19,16 +19,17 @@ var CONFIG = {
   REASONS: ['수업 중 사용 중', '수리 맡김', '분실·행방 확인 중', '충전기 고장', '집에 가져감', '기타']
 };
 
-var SHEET = { students: '학생', records: '점검기록', ledger: '코인내역', teachers: '교사' };
+var SHEET = { students: '학생', carts: '보관함', records: '점검기록', ledger: '코인내역', teachers: '교사' };
 var HEAD = {
-  students: ['이메일', '이름', '당번(O)'],
+  students: ['이메일', '이름', '당번(O)', '반(보관함 이름)', '번호'],
+  carts: ['보관함(반)', '사용하는 칸 수', '사용하지 않는 칸 (선택, 쉼표로 구분)'],
   records: ['시각', '날짜', '시간대', '보관함', '제출자 이메일', '제출자 이름',
-            '36칸 상태 (R충전 중 G완료 O비어 있음)', '비어 있는 칸과 사유', 'AI 판정', '학생이 고친 칸 수', '방식', '코인 지급'],
+            '36칸 상태 (R충전 중 G완료 O비어 있음 X미사용)', '비어 있는 칸과 사유', 'AI 판정', '학생이 고친 칸 수', '방식', '코인 지급'],
   ledger: ['시각', '이메일', '이름', '코인', '구분', '메모'],
   teachers: ['이메일']
 };
 var PERIOD_KO = { morning: '아침', afternoon: '방과 후' };
-var KEY2CH = { red: 'R', green: 'G', off: 'O' };
+var KEY2CH = { red: 'R', green: 'G', off: 'O', unused: 'X' };
 
 /* ---------- 웹앱 진입 ---------- */
 function doGet() {
@@ -42,14 +43,21 @@ function setup() {
   var ss = SpreadsheetApp.getActive();
   Object.keys(SHEET).forEach(function (k) {
     var sh = ss.getSheetByName(SHEET[k]) || ss.insertSheet(SHEET[k]);
+    var n = HEAD[k].length;
     if (sh.getLastRow() === 0) {
-      sh.getRange(1, 1, 1, HEAD[k].length).setValues([HEAD[k]]);
+      sh.getRange(1, 1, 1, n).setValues([HEAD[k]]);
       sh.setFrozenRows(1);
+    } else {
+      // 예전에 만든 시트에 새로 생긴 머리글(예: 학생 시트의 반, 번호)이 비어 있으면 채웁니다.
+      var cur = sh.getRange(1, 1, 1, n).getValues()[0];
+      sh.getRange(1, 1, 1, n).setValues([cur.map(function (v, i) { return String(v).trim() ? v : HEAD[k][i]; })]);
     }
   });
+  var carts = ss.getSheetByName(SHEET.carts);
+  if (carts.getLastRow() < 2) carts.appendRow([CONFIG.CART_NAME, CONFIG.SLOTS, '']);
   var first = ss.getSheets()[0];
-  if (first.getName() !== SHEET.students && first.getLastRow() === 0 && ss.getSheets().length > 4) ss.deleteSheet(first);
-  SpreadsheetApp.getUi().alert('시트 4개를 만들었습니다. 학생 시트에 이메일·이름·당번을 입력하고, 교사 시트에 선생님 이메일을 넣어 주세요.');
+  if (first.getName() !== SHEET.students && first.getLastRow() === 0 && ss.getSheets().length > Object.keys(SHEET).length) ss.deleteSheet(first);
+  SpreadsheetApp.getUi().alert('시트를 준비했습니다.\n1) 보관함 시트에 반 이름과 사용하는 칸 수를 입력하세요.\n2) 학생 시트에 이메일, 이름, 당번(O), 반을 입력하세요.\n3) 교사 시트에 선생님 이메일을 넣으세요.');
 }
 
 /* ---------- 도우미 ---------- */
@@ -72,11 +80,51 @@ function email_() {
   return e;
 }
 
+// 보관함 시트의 한 줄을 { name, size, used, unused }로 바꿉니다. unused는 0부터 시작하는 칸 위치입니다.
+// 사용하는 칸 수가 N이면 N+1번 이후가 모두 미사용이고, '사용하지 않는 칸'에 적은 번호도 미사용입니다.
+function cartInfo_(name, size, unusedText) {
+  var n = Math.floor(Number(size));
+  if (!(n >= 1 && n <= CONFIG.SLOTS)) n = CONFIG.SLOTS;
+  var unused = [], i;
+  for (i = n; i < CONFIG.SLOTS; i++) unused.push(i);
+  String(unusedText == null ? '' : unusedText).split(/[,\s;]+/).forEach(function (t) {
+    var k = Math.floor(Number(t));
+    if (k >= 1 && k <= CONFIG.SLOTS && unused.indexOf(k - 1) < 0) unused.push(k - 1);
+  });
+  unused.sort(function (a, b) { return a - b; });
+  return { name: name, size: n, used: CONFIG.SLOTS - unused.length, unused: unused };
+}
+
+function carts_() {
+  var list = [];
+  // 보관함 시트가 아직 없으면(setup을 다시 실행하기 전) 기본 보관함 하나로 동작합니다.
+  var sh = SpreadsheetApp.getActive().getSheetByName(SHEET.carts);
+  (sh ? sh.getDataRange().getValues().slice(1) : []).forEach(function (r) {
+    var name = String(r[0]).trim();
+    if (name) list.push(cartInfo_(name, r[1], r[2]));
+  });
+  if (!list.length) list.push(cartInfo_(CONFIG.CART_NAME, CONFIG.SLOTS, ''));
+  return list;
+}
+
+// 학생이 점검할 보관함. 학생 시트의 '반'이 비어 있으면 보관함이 하나뿐일 때만 그 보관함을 씁니다.
+function cartFor_(student) {
+  var list = carts_(), i;
+  if (student.cartName) {
+    for (i = 0; i < list.length; i++) if (list[i].name === student.cartName) return list[i];
+    return null;
+  }
+  return list.length === 1 ? list[0] : null;
+}
+
 function role_() {
   var email = email_();
   var student = null;
   rows_('students').some(function (r) {
-    if (String(r[0]).trim().toLowerCase() === email) { student = { name: String(r[1] || ''), duty: isOn_(r[2]) }; return true; }
+    if (String(r[0]).trim().toLowerCase() === email) {
+      student = { name: String(r[1] || ''), duty: isOn_(r[2]), cartName: String(r[3] == null ? '' : r[3]).trim(), no: String(r[4] == null ? '' : r[4]).trim() };
+      return true;
+    }
     return false;
   });
   var teacher = rows_('teachers').some(function (r) { return String(r[0]).trim().toLowerCase() === email; });
@@ -97,10 +145,10 @@ function history_(email, n) {
   return out.reverse().slice(0, n);
 }
 
-function todayStatus_() {
+function todayStatus_(cartName) {
   var today = today_(), st = { morning: null, afternoon: null };
   rows_('records').forEach(function (r) {
-    if (fmtDate_(r[1]) !== today || r[3] !== CONFIG.CART_NAME) return;
+    if (fmtDate_(r[1]) !== today || String(r[3]) !== cartName) return;
     var p = r[2] === PERIOD_KO.morning ? 'morning' : 'afternoon';
     if (!st[p]) st[p] = { by: String(r[5] || r[4]), coin: Number(r[11]) > 0 };
   });
@@ -118,11 +166,18 @@ function drawCoins_() {
 /* ---------- 화면에서 부르는 함수 ---------- */
 function getInit() {
   var r = role_();
+  var cart = r.student ? cartFor_(r.student) : null, notice = '';
+  if (r.student && r.student.duty && !cart) {
+    notice = r.student.cartName
+      ? '보관함 시트에 "' + r.student.cartName + '" 반이 없습니다. 선생님께 알려 주세요.'
+      : '학생 시트의 반 칸이 비어 있습니다. 선생님께 알려 주세요.';
+  }
   var out = {
     email: r.email, student: !!r.student, teacher: r.teacher,
-    name: r.student ? r.student.name : '', duty: !!(r.student && r.student.duty),
-    cart: CONFIG.CART_NAME, reasons: CONFIG.REASONS, requireAi: CONFIG.REQUIRE_AI_FOR_COIN,
-    status: todayStatus_(), coins: 0, history: []
+    name: r.student ? r.student.name : '', duty: !!(r.student && r.student.duty && cart),
+    cart: cart ? cart.name : '', unused: cart ? cart.unused : [], notice: notice,
+    reasons: CONFIG.REASONS, requireAi: CONFIG.REQUIRE_AI_FOR_COIN,
+    status: cart ? todayStatus_(cart.name) : { morning: null, afternoon: null }, coins: 0, history: []
   };
   if (r.student) { out.coins = balance_(r.email); out.history = history_(r.email, 15); }
   return out;
@@ -131,6 +186,8 @@ function getInit() {
 function analyze(b64) {
   var r = role_();
   if (!r.student || !r.student.duty) throw new Error('오늘 당번이 아닙니다.');
+  var cart = cartFor_(r.student);
+  if (!cart) throw new Error('보관함(반) 설정을 찾을 수 없습니다. 선생님께 알려 주세요.');
   if (typeof b64 !== 'string' || b64.length < 1000 || b64.length > 6000000) throw new Error('사진 크기가 올바르지 않습니다.');
 
   var cache = CacheService.getScriptCache();
@@ -224,9 +281,12 @@ function analyze(b64) {
     slots.every(function (v) { return v === 'red' || v === 'green' || v === 'off'; });
   if (!valid) return { ok: false, manual: true, message: 'AI가 36칸을 모두 읽지 못했습니다. (읽은 칸 ' + (Array.isArray(slots) ? slots.length : 0) + '개)' };
 
+  // 사용하지 않는 칸은 AI가 어떻게 읽었든 '미사용'으로 덮어씁니다.
+  slots = slots.slice();
+  cart.unused.forEach(function (i) { slots[i] = 'unused'; });
   var unc = (Array.isArray(parsed.uncertain) ? parsed.uncertain : [])
     .map(function (n) { return Number(n) - 1; })
-    .filter(function (i, idx, a) { return i >= 0 && i < CONFIG.SLOTS && a.indexOf(i) === idx; });
+    .filter(function (i, idx, a) { return i >= 0 && i < CONFIG.SLOTS && a.indexOf(i) === idx && cart.unused.indexOf(i) < 0; });
   if (unc.length > CONFIG.MAX_UNCERTAIN) {
     return { ok: false, retake: true, message: '사진이 흐리거나 보관함 전체가 보이지 않습니다. 다시 찍어 주세요.' };
   }
@@ -240,9 +300,13 @@ function submit(p) {
   var r = role_();
   if (!r.student || !r.student.duty) throw new Error('오늘 당번이 아닙니다.');
   if (!p || !PERIOD_KO[p.period]) throw new Error('점검 시간이 올바르지 않습니다.');
+  var cart = cartFor_(r.student);
+  if (!cart) throw new Error('보관함(반) 설정을 찾을 수 없습니다. 선생님께 알려 주세요.');
   var slots = p.slots;
-  if (!Array.isArray(slots) || slots.length !== CONFIG.SLOTS ||
-      !slots.every(function (v) { return v === 'red' || v === 'green' || v === 'off'; })) throw new Error('36칸 상태가 올바르지 않습니다.');
+  // 사용하는 칸은 red·green·off, 사용하지 않는 칸은 unused 여야 합니다.
+  if (!Array.isArray(slots) || slots.length !== CONFIG.SLOTS || !slots.every(function (v, i) {
+    return cart.unused.indexOf(i) >= 0 ? v === 'unused' : (v === 'red' || v === 'green' || v === 'off');
+  })) throw new Error('칸 상태가 올바르지 않습니다. 화면을 새로 고친 뒤 다시 제출해 주세요.');
 
   var reasons = p.reasons || {}, detail = [];
   slots.forEach(function (s, i) {
@@ -263,7 +327,7 @@ function submit(p) {
     var periodKo = PERIOD_KO[p.period], today = today_();
 
     var already = rows_('records').some(function (row) {
-      return fmtDate_(row[1]) === today && row[2] === periodKo && row[3] === CONFIG.CART_NAME && Number(row[11]) > 0;
+      return fmtDate_(row[1]) === today && row[2] === periodKo && String(row[3]) === cart.name && Number(row[11]) > 0;
     });
     var coins = 0, why = '';
     if (already) why = 'already';
@@ -273,7 +337,7 @@ function submit(p) {
     var edited = ai ? slots.filter(function (s, i) { return s !== ai[i]; }).length : '';
     var now = new Date();
     sheet_('records').appendRow([
-      now, today, periodKo, CONFIG.CART_NAME, r.email, safe_(r.student.name),
+      now, today, periodKo, cart.name, r.email, safe_(r.student.name),
       slots.map(function (s) { return KEY2CH[s]; }).join(''), safe_(detail.join('; ')),
       ai ? ai.map(function (s) { return KEY2CH[s]; }).join('') : '', edited, ai ? 'AI+확인' : '직접 표시', coins
     ]);
@@ -316,11 +380,15 @@ function teacherData() {
     var e = String(r[1]).trim().toLowerCase();
     totals[e] = (totals[e] || 0) + (Number(r[3]) || 0);
   });
+  var carts = carts_();
   var students = rows_('students').filter(function (r) { return String(r[0]).trim(); }).map(function (r) {
     var e = String(r[0]).trim().toLowerCase();
-    return { email: e, name: String(r[1] || e), duty: isOn_(r[2]), total: totals[e] || 0 };
+    var cartName = String(r[3] == null ? '' : r[3]).trim() || (carts.length === 1 ? carts[0].name : '');
+    return { email: e, name: String(r[1] || e), duty: isOn_(r[2]), total: totals[e] || 0, cart: cartName, no: String(r[4] == null ? '' : r[4]).trim() };
   });
-  return { today: today_(), status: todayStatus_(), recent: recs, students: students };
+  var todayByCart = {};
+  carts.forEach(function (c) { todayByCart[c.name] = todayStatus_(c.name); });
+  return { today: today_(), carts: carts, todayByCart: todayByCart, recent: recs, students: students };
 }
 
 function redeem(email, amount, memo) {

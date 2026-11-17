@@ -17,8 +17,15 @@ MOCK = r"""<script>
 /* ===== 시연용 가짜 서버 (실제 앱에서는 구글 앱스 스크립트가 이 역할을 합니다) ===== */
 (function () {
   var REASONS = ['수업 중 사용 중', '수리 맡김', '분실·행방 확인 중', '충전기 고장', '집에 가져감', '기타'];
-  var CH = { red: 'R', green: 'G', off: 'O' };
-  // 예시 분석 결과: 시험용 사진(cart-sample-01)의 정답과 같음. 빈 칸 5, 8, 9, 17, 32번
+  var CH = { red: 'R', green: 'G', off: 'O', unused: 'X' };
+  function range(a, b) { var r = []; for (var i = a; i < b; i++) r.push(i); return r; }
+  // 반마다 보관함이 있고, 반 인원보다 많은 칸은 사용하지 않는 칸입니다. (실제 앱에서는 '보관함' 시트에 적습니다)
+  var CARTS = [
+    { name: '3학년 1반', size: 28, used: 28, unused: range(28, 36) },
+    { name: '3학년 2반', size: 30, used: 29, unused: [14].concat(range(30, 36)) }
+  ];
+  var MY = CARTS[0];
+  // 예시 분석 결과: 시험용 사진(cart-sample-01)의 정답과 같음. 빈 칸 5, 8, 9, 17, 32번 (32번은 1반의 미사용 칸이라 무시됨)
   var SAMPLE = ['red','green','green','green','off','green','red','off','off','green','red','red',
                 'red','green','red','red','off','green','green','green','red','green','red','red',
                 'red','red','red','red','red','red','green','off','red','red','red','red'];
@@ -27,31 +34,40 @@ MOCK = r"""<script>
   var today = new Date(), recent = [];
   var rs = ['수업 중 사용 중', '수리 맡김', '충전기 고장', '집에 가져감', '기타: 분실 의심'];
   var names = ['학생 A', '학생 B', '학생 C'];
-  for (var k = 13; k >= 1; k--) {
-    var d = new Date(today); d.setDate(d.getDate() - k);
-    if (d.getDay() === 0 || d.getDay() === 6) continue;
-    ['morning', 'afternoon'].forEach(function (per) {
-      if (k === 3 && per === 'morning') return;
-      var slots = '', reasons = {};
-      for (var i = 0; i < 36; i++) {
-        var off = (i === 6 && k % 2 === 0) || (i === 19 && k % 3 === 0) || i === 30 || (i === 7 && k < 5);
-        slots += off ? 'O' : (i % 2 ? 'G' : 'R');
-        if (off) reasons[String(i + 1)] = rs[(i + k) % 5];
-      }
-      recent.push({ when: (d.getMonth() + 1) + '/' + d.getDate() + ' ' + (per === 'morning' ? '08:10' : '15:40'), date: ymd(d), period: per,
-        cart: '1번 보관함', email: 'a' + (k % 3) + '@demo', by: names[k % 3], slots: slots, reasons: reasons,
-        edited: k % 4 === 0 ? 2 : 0, mode: 'AI+확인', coin: 1 + (k % 5) });
-    });
-  }
+  CARTS.forEach(function (cart, ci) {
+    for (var k = 13; k >= 1; k--) {
+      var d = new Date(today); d.setDate(d.getDate() - k);
+      if (d.getDay() === 0 || d.getDay() === 6) continue;
+      ['morning', 'afternoon'].forEach(function (per) {
+        if (ci === 1 && k === 3 && per === 'morning') return;
+        var slots = '', reasons = {};
+        for (var i = 0; i < 36; i++) {
+          if (cart.unused.indexOf(i) >= 0) { slots += 'X'; continue; }
+          var off = (i === 6 && k % 2 === 0) || (i === 19 && k % 3 === 0) || i === 26 || (i === 7 && k < 5 && ci === 0);
+          slots += off ? 'O' : (i % 2 ? 'G' : 'R');
+          if (off) reasons[String(i + 1)] = rs[(i + k) % 5];
+        }
+        recent.push({ when: (d.getMonth() + 1) + '/' + d.getDate() + ' ' + (per === 'morning' ? '08:10' : '15:40'), date: ymd(d), period: per,
+          cart: cart.name, email: 'a' + ((k + ci) % 3) + '@demo', by: names[(k + ci) % 3], slots: slots, reasons: reasons,
+          edited: k % 4 === 0 ? 2 : 0, mode: 'AI+확인', coin: 1 + (k % 5) });
+      });
+    }
+  });
+  recent.sort(function (x, y) { return x.date < y.date ? -1 : x.date > y.date ? 1 : 0; });
   var students = [
-    { email: 'a0@demo', name: '학생 A', duty: false, total: 14 },
-    { email: 'a1@demo', name: '학생 B', duty: true, total: 9 },
-    { email: 'a2@demo', name: '학생 C', duty: false, total: 11 },
-    { email: 'me@demo', name: '시연 사용자', duty: true, total: 4 }
+    { email: 'a0@demo', name: '학생 A', duty: false, total: 14, cart: '3학년 1반', no: '1' },
+    { email: 'a1@demo', name: '학생 B', duty: true, total: 9, cart: '3학년 2반', no: '4' },
+    { email: 'a2@demo', name: '학생 C', duty: false, total: 11, cart: '3학년 2반', no: '7' },
+    { email: 'me@demo', name: '시연 사용자', duty: true, total: 4, cart: '3학년 1반', no: '12' }
   ];
   var me = students[3], history = [{ when: '어제 15:40', coins: 4, kind: '획득', memo: '방과 후 점검' }];
   var done = {};   // 오늘 이미 코인이 나간 시간대
 
+  function todayBy(cartName) {
+    var st = { morning: null, afternoon: null }, t = ymd(today);
+    recent.forEach(function (r) { if (r.cart === cartName && r.date === t && !st[r.period]) st[r.period] = { by: r.by, coin: r.coin > 0 }; });
+    return st;
+  }
   function drawCoins() {
     var t = [[1, 35], [2, 30], [3, 20], [4, 10], [5, 5]], x = Math.random() * 100;
     for (var i = 0; i < t.length; i++) { x -= t[i][1]; if (x < 0) return t[i][0]; }
@@ -59,10 +75,14 @@ MOCK = r"""<script>
   }
   var impl = {
     getInit: function () {
-      return { email: 'me@demo', name: me.name, student: true, teacher: true, duty: true, cart: '1번 보관함', reasons: REASONS,
-        requireAi: true, status: { morning: null, afternoon: null }, coins: me.total, history: history.slice().reverse() };
+      return { email: 'me@demo', name: me.name, student: true, teacher: true, duty: true, cart: MY.name, unused: MY.unused, notice: '', reasons: REASONS,
+        requireAi: true, status: todayBy(MY.name), coins: me.total, history: history.slice().reverse() };
     },
-    analyze: function () { return { ok: true, analysisId: 'demo', slots: SAMPLE.slice(), uncertain: [8], note: '시연용 예시 결과입니다 (올린 사진과 관계없음)' }; },
+    analyze: function () {
+      var slots = SAMPLE.slice();
+      MY.unused.forEach(function (i) { slots[i] = 'unused'; });
+      return { ok: true, analysisId: 'demo', slots: slots, uncertain: [8], note: '시연용 예시 결과입니다 (올린 사진과 관계없음)' };
+    },
     submit: function (p) {
       var reasons = p.reasons || {}, empties = {};
       Object.keys(reasons).forEach(function (k) { empties[k] = reasons[k]; });
@@ -70,11 +90,15 @@ MOCK = r"""<script>
       done[p.period] = true;
       var now = new Date();
       recent.push({ when: (now.getMonth() + 1) + '/' + now.getDate() + ' ' + p2(now.getHours()) + ':' + p2(now.getMinutes()), date: ymd(now), period: p.period,
-        cart: '1번 보관함', email: 'me@demo', by: me.name, slots: p.slots.map(function (s) { return CH[s]; }).join(''), reasons: empties, edited: 0, mode: 'AI+확인', coin: coins });
+        cart: MY.name, email: 'me@demo', by: me.name, slots: p.slots.map(function (s) { return CH[s]; }).join(''), reasons: empties, edited: 0, mode: 'AI+확인', coin: coins });
       if (coins) { me.total += coins; history.push({ when: '방금', coins: coins, kind: '획득', memo: ymd(now) + ' 점검' }); }
       return { ok: true, coins: coins, why: coins ? '' : 'already', total: me.total };
     },
-    teacherData: function () { return { today: ymd(today), status: {}, recent: recent.slice(-600), students: students.map(function (s) { return { email: s.email, name: s.name, duty: s.duty, total: s.total }; }) }; },
+    teacherData: function () {
+      var by = {}; CARTS.forEach(function (c) { by[c.name] = todayBy(c.name); });
+      return { today: ymd(today), carts: CARTS, todayByCart: by, recent: JSON.parse(JSON.stringify(recent.slice(-600))),
+        students: students.map(function (s) { return { email: s.email, name: s.name, duty: s.duty, total: s.total, cart: s.cart, no: s.no }; }) };
+    },
     redeem: function (email, amount) {
       var s = students.filter(function (x) { return x.email === email; })[0], n = Math.floor(Number(amount));
       if (!s) throw new Error('명단에 없는 학생입니다.');

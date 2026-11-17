@@ -142,6 +142,11 @@
   .recs .body { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; }
   .tag { font-size: 11px; font-weight: 700; border: 1px solid var(--line); color: var(--muted); border-radius: 5px; padding: 1px 6px; margin-left: 6px; }
   .scrollY { max-height: 420px; overflow: auto; }
+  /* 사용하지 않는 칸 (반 인원보다 많은 칸) */
+  .cell.st-unused { background: transparent; border: 2px dashed var(--offc); color: var(--offc); opacity: .6; cursor: default; }
+  .st-unused .dot { visibility: hidden; }
+  .mc.st-unused { background: transparent; border: 1px dashed var(--offc); color: var(--offc); opacity: .7; }
+  .hc.unused { background: transparent; border-style: dashed; color: var(--muted); opacity: .6; }
   #tip { position: fixed; z-index: 50; background: var(--fg); color: var(--bg); font-size: 13px; padding: 6px 10px; border-radius: 8px; pointer-events: none; max-width: 240px; transform: translate(-50%, -100%); }
 </style>
 </head>
@@ -160,8 +165,8 @@
   <!-- 점검 -->
   <section id="p-check" style="display:none; flex-direction:column; gap:20px">
     <div class="card" id="notduty" hidden>
-      <h2>오늘은 점검 당번이 아닙니다</h2>
-      <p class="muted">당번이 되면 이 화면에서 보관함 사진을 올리고 코인을 받을 수 있습니다. 내 코인은 위의 '내 코인'에서 볼 수 있습니다.</p>
+      <h2 id="nd-title">오늘은 점검 당번이 아닙니다</h2>
+      <p class="muted" id="nd-text">당번이 되면 이 화면에서 보관함 사진을 올리고 코인을 받을 수 있습니다. 내 코인은 위의 '내 코인'에서 볼 수 있습니다.</p>
     </div>
 
     <div id="duty" style="display:flex; flex-direction:column; gap:20px">
@@ -233,13 +238,17 @@
   <section id="p-teacher" style="display:none; flex-direction:column; gap:20px">
     <div class="dash-head">
       <h2 style="font-size:18px">점검 대시보드</h2>
-      <div class="seg" role="radiogroup" aria-label="기간">
-        <label><input type="radio" name="range" value="7" checked><span>7일</span></label>
-        <label><input type="radio" name="range" value="30"><span>30일</span></label>
-        <label><input type="radio" name="range" value="0"><span>전체</span></label>
+      <div class="row">
+        <select id="cart-sel" aria-label="보관함(반)" hidden></select>
+        <div class="seg" role="radiogroup" aria-label="기간">
+          <label><input type="radio" name="range" value="7" checked><span>7일</span></label>
+          <label><input type="radio" name="range" value="30"><span>30일</span></label>
+          <label><input type="radio" name="range" value="0"><span>전체</span></label>
+        </div>
       </div>
     </div>
     <p class="muted" id="d-load">불러오는 중입니다.</p>
+    <div class="card" id="d-today" hidden></div>
     <div class="tiles" id="d-tiles"></div>
     <div class="card" id="d-latest"></div>
     <div class="card" id="d-heat"></div>
@@ -263,7 +272,7 @@
 <script>
 (function () {
   var N = 36, COLS = 12;
-  var ST = { red: '충전 중', green: '충전 완료', off: '비어 있음' };
+  var ST = { red: '충전 중', green: '충전 완료', off: '비어 있음', unused: '미사용' };
   var PERIOD = { morning: '아침', afternoon: '방과 후' };
   var $ = function (s) { return document.querySelector(s); };
   var esc = function (t) { return String(t).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
@@ -291,7 +300,7 @@
       $('#blocked').innerHTML = '<h2>명단에 없는 계정입니다</h2><p class="muted">선생님께 이 계정(' + esc(me.email) + ')을 학생 명단에 넣어 달라고 말씀드려 주세요.</p>';
       return;
     }
-    $('#who').textContent = (me.name || me.email) + (me.duty ? ' · 오늘 당번' : '');
+    $('#who').textContent = (me.cart ? me.cart + ' · ' : '') + (me.name || me.email) + (me.duty ? ' · 오늘 당번' : '');
     buildTabs();
     renderPeriodNote();
     renderCoins();
@@ -315,7 +324,10 @@
     $('#p-coins').style.display = name === 'coins' ? 'block' : 'none';
     $('#p-teacher').style.display = name === 'teacher' ? 'flex' : 'none';
     document.querySelectorAll('.tab').forEach(function (b) { b.setAttribute('aria-selected', b.dataset.tab === name); });
-    if (name === 'check') { $('#notduty').hidden = !!ME.duty; $('#duty').style.display = ME.duty ? 'flex' : 'none'; }
+    if (name === 'check') {
+      $('#notduty').hidden = !!ME.duty; $('#duty').style.display = ME.duty ? 'flex' : 'none';
+      if (ME.notice) { $('#nd-title').textContent = '점검할 수 없습니다'; $('#nd-text').textContent = ME.notice; }
+    }
     if (name === 'teacher') loadTeacher();
   }
 
@@ -351,8 +363,10 @@
   }
 
   function startManual(msg) {
+    var un = ME.unused || [];
     S.slots = Array(N).fill('green'); S.ai = null; S.analysisId = null;
-    S.unc = new Set(Array.from({ length: N }, function (_, i) { return i; }));
+    un.forEach(function (i) { S.slots[i] = 'unused'; });
+    S.unc = new Set(Array.from({ length: N }, function (_, i) { return i; }).filter(function (i) { return un.indexOf(i) < 0; }));
     status(msg + (ME.requireAi ? ' 사진 분석 없이 제출하면 코인은 지급되지 않습니다.' : ' 36칸을 모두 확인해 주세요.'), true);
     reveal();
   }
@@ -393,6 +407,7 @@
 
   function renderGrid() {
     $('#cart').innerHTML = S.slots.map(function (st, i) {
+      if (st === 'unused') return '<button type="button" class="cell st-unused" disabled aria-label="' + (i + 1) + '번 미사용 칸"><span>' + (i + 1) + '</span><i class="dot"></i></button>';
       var edited = S.ai && S.ai[i] !== st;
       var cls = ['cell', 'st-' + st, S.sel === i ? 'sel' : '', edited ? 'edited' : '', S.unc.has(i) ? 'unc' : ''].join(' ');
       var lab = (i + 1) + '번 ' + ST[st] + (S.unc.has(i) ? ', 확인 필요' : '');
@@ -417,11 +432,12 @@
     renderGrid(); renderChooser(); renderCounts(); renderReasons(); updateSubmit();
   });
   function renderCounts() {
-    var c = { red: 0, green: 0, off: 0 }; S.slots.forEach(function (s) { c[s]++; });
+    var c = { red: 0, green: 0, off: 0, unused: 0 }; S.slots.forEach(function (s) { c[s]++; });
     $('#counts').innerHTML =
       '<span><i class="dot" style="background:var(--red)"></i>충전 중 ' + c.red + '</span>' +
       '<span><i class="dot" style="background:var(--green)">✓</i>충전 완료 ' + c.green + '</span>' +
-      '<span><i class="dot" style="border:2px solid var(--offc)"></i>비어 있음 ' + c.off + '</span>';
+      '<span><i class="dot" style="border:2px solid var(--offc)"></i>비어 있음 ' + c.off + '</span>' +
+      (c.unused ? '<span class="muted">점선 칸 ' + c.unused + '개는 사용하지 않는 칸입니다</span>' : '');
   }
 
   /* ----- 사유 ----- */
@@ -539,24 +555,45 @@
   function md(s) { var a = s.split('-'); return +a[1] + '/' + +a[2]; }
   function reasonKey(r) { return String(r).indexOf('기타') === 0 ? '기타' : r; }
   function offCount(slots) { return (slots.match(/O/g) || []).length; }
-  var CH2ST = { R: 'red', G: 'green', O: 'off' };
+  var CH2ST = { R: 'red', G: 'green', O: 'off', X: 'unused' };
+  var CART = '', MASK = {}, DREC = [];
+  function maskOf(name) { return MASK[name] || []; }
 
   function loadTeacher() {
     run('teacherData').then(function (d) {
       DASH = d; $('#d-load').hidden = true;
-      $('#r-student').innerHTML = d.students.map(function (s) { return '<option value="' + esc(s.email) + '">' + esc(s.name) + ' (' + s.total + ')</option>'; }).join('');
+      MASK = {};
+      d.carts.forEach(function (c) { MASK[c.name] = c.unused; });
+      // 지금 보관함 설정을 기준으로 미사용 칸을 X로 바꿔서, 예전 기록도 같은 기준으로 계산합니다.
+      d.recent.forEach(function (r) {
+        var un = MASK[r.cart]; if (!un || !un.length) return;
+        var ch = r.slots.split(''), rs = {};
+        Object.keys(r.reasons).forEach(function (k) { if (un.indexOf(Number(k) - 1) < 0) rs[k] = r.reasons[k]; });
+        un.forEach(function (i) { if (i < ch.length) ch[i] = 'X'; });
+        r.slots = ch.join(''); r.reasons = rs;
+      });
+      var names = d.carts.map(function (c) { return c.name; });
+      d.recent.forEach(function (r) { if (names.indexOf(r.cart) < 0) names.push(r.cart); });
+      var sel = $('#cart-sel');
+      sel.innerHTML = names.map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('');
+      if (names.indexOf(CART) < 0) CART = names[0] || '';
+      sel.value = CART; sel.hidden = names.length < 2;
+      $('#r-student').innerHTML = d.students.map(function (s) { return '<option value="' + esc(s.email) + '">' + esc(s.name) + (s.cart ? ' (' + esc(s.cart) + ')' : '') + ' · ' + s.total + '</option>'; }).join('');
       renderDash();
     }).catch(function (e) { $('#d-load').hidden = false; $('#d-load').textContent = errText(e); });
   }
+  $('#cart-sel').addEventListener('change', function (e) { CART = e.target.value; if (DASH) renderDash(); });
   document.querySelectorAll('input[name="range"]').forEach(function (r) {
     r.addEventListener('change', function () { RANGE = Number(r.value); if (DASH) renderDash(); });
   });
 
   function renderDash() {
     var today = DASH.today;
-    var start = RANGE ? addDays(today, -(RANGE - 1)) : (DASH.recent.length ? DASH.recent[0].date : today);
-    var recs = DASH.recent.filter(function (r) { return r.date >= start; });
+    DREC = DASH.recent.filter(function (r) { return r.cart === CART; });
+    var start = RANGE ? addDays(today, -(RANGE - 1)) : (DREC.length ? DREC[0].date : today);
+    var recs = DREC.filter(function (r) { return r.date >= start; });
     var label = RANGE ? '최근 ' + RANGE + '일' : '전체 기간';
+    renderToday();
     renderTiles(recs, today, start);
     renderLatest();
     renderHeat(recs, label);
@@ -566,12 +603,23 @@
     renderRecs(recs);
   }
 
+  function renderToday() {
+    var el = $('#d-today'), carts = DASH.carts;
+    if (carts.length < 2) { el.hidden = true; return; }
+    el.hidden = false;
+    function cell(st) { return st ? '<span>' + esc(st.by) + ' 제출</span>' : '<span class="muted">미제출</span>'; }
+    el.innerHTML = '<h2>오늘 반별 제출</h2><div class="scroll"><table><tr><th>반</th><th>아침</th><th>방과 후</th></tr>' + carts.map(function (c) {
+      var t = DASH.todayByCart[c.name] || {};
+      return '<tr><td>' + esc(c.name) + '</td><td>' + cell(t.morning) + '</td><td>' + cell(t.afternoon) + '</td></tr>';
+    }).join('') + '</table></div>';
+  }
+
   function tile(l, v, s) { return '<div class="tile"><p class="l">' + esc(l) + '</p><p class="v">' + esc(v) + '</p><p class="s">' + esc(s) + '</p></div>'; }
 
   function renderTiles(recs, today, start) {
     var tm = recs.some(function (r) { return r.date === today && r.period === 'morning'; });
     var ta = recs.some(function (r) { return r.date === today && r.period === 'afternoon'; });
-    var last = DASH.recent[DASH.recent.length - 1];
+    var last = DREC[DREC.length - 1];
     var seen = {}, exp = 0, d;
     recs.forEach(function (r) { if (isWeekday(r.date)) seen[r.date + r.period] = 1; });
     for (d = start; d <= today; d = addDays(d, 1)) if (isWeekday(d)) exp += 2;
@@ -599,7 +647,7 @@
   var LEGEND = '<div class="legend"><span><i class="dot" style="background:var(--red)"></i>충전 중</span><span><i class="dot" style="background:var(--green)">✓</i>충전 완료</span><span><i class="dot" style="border:2px solid var(--offc)"></i>비어 있음</span></div>';
 
   function renderLatest() {
-    var el = $('#d-latest'), last = DASH.recent[DASH.recent.length - 1];
+    var el = $('#d-latest'), last = DREC[DREC.length - 1];
     if (!last) { el.innerHTML = '<h2>가장 최근 보관함</h2><p class="empty">아직 제출된 점검이 없습니다.</p>'; return; }
     el.innerHTML = '<h2>가장 최근 보관함</h2><p class="muted">' + esc(md(last.date) + ' ' + (last.period === 'morning' ? '아침' : '방과 후') + ' · ' + last.by + ' 제출 · 비어 있는 칸 ' + offCount(last.slots) + '개') + '</p>' +
       LEGEND + miniGrid(last.slots, last.reasons) + reasonChips(last.reasons);
@@ -614,6 +662,7 @@
       }
     });
     var cells = cnt.map(function (c, i) {
+      if (maskOf(CART).indexOf(i) >= 0) return '<span class="hc unused" data-tip="' + (i + 1) + '번 · 사용하지 않는 칸" tabindex="0" aria-label="' + (i + 1) + '번 미사용 칸">' + (i + 1) + '</span>';
       var rate = n ? c / n : 0, pct = Math.round(12 + rate * 88);
       var st = c ? 'background:color-mix(in srgb, var(--seq) ' + pct + '%, var(--surface));color:' + (pct >= 55 ? '#fff' : 'var(--fg)') : 'background:var(--bg);color:var(--muted)';
       var tip = (i + 1) + '번 · ' + c + '/' + n + '회 비어 있음 (' + Math.round(rate * 100) + '%)';
@@ -666,7 +715,7 @@
   function renderStudents(recs, label) {
     var sub = {}, earn = {};
     recs.forEach(function (r) { sub[r.email] = (sub[r.email] || 0) + 1; earn[r.email] = (earn[r.email] || 0) + r.coin; });
-    var rows = DASH.students.slice().sort(function (a, b) { return (sub[b.email] || 0) - (sub[a.email] || 0) || a.name.localeCompare(b.name); });
+    var rows = DASH.students.filter(function (s) { return s.cart === CART; }).sort(function (a, b) { return (sub[b.email] || 0) - (sub[a.email] || 0) || a.name.localeCompare(b.name); });
     $('#d-students').innerHTML = '<h2>학생별</h2><p class="muted">' + esc(label) + ' 기준 제출 횟수와 받은 코인, 그리고 현재 코인</p>' +
       '<div class="scroll"><table><tr><th>이름</th><th class="num">제출</th><th class="num">받은 코인</th><th class="num">현재 코인</th></tr>' +
       rows.map(function (s) { return '<tr><td>' + esc(s.name) + (s.duty ? ' <span class="tag">당번</span>' : '') + '</td><td class="num">' + (sub[s.email] || 0) + '</td><td class="num">' + (earn[s.email] || 0) + '</td><td class="num">' + s.total + '</td></tr>'; }).join('') + '</table></div>';
