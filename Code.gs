@@ -15,6 +15,9 @@ var CONFIG = {
   GEMINI_MODEL: 'gemini-2.5-flash',
   REQUIRE_AI_FOR_COIN: true,   // true: 사진 분석이 성공한 제출만 코인 지급
   MAX_UNCERTAIN: 12,           // AI가 확신 못 한 칸이 이보다 많으면 다시 찍게 함
+  // Gemini 요청 횟수 상한. 무료 사용량을 넘거나 비용이 생기는 일을 막기 위한 안전장치입니다. (실패한 요청도 셉니다)
+  MAX_GEMINI_CALLS_PER_DAY: 150,   // 앱 전체에서 하루에 Gemini에 보낼 수 있는 요청 수
+  MAX_CALLS_PER_PHOTO: 8,          // 사진 한 장을 분석하려고 다시 시도하거나 다른 모델을 써 볼 수 있는 최대 횟수
   MAX_ANALYZE_PER_HOUR: 20,    // 한 사람이 한 시간에 사진 분석에 성공할 수 있는 횟수 (실패한 요청은 세지 않음, 교사는 제한 없음)
   // [코인 수, 가중치] — 1~5개, 많이 나올수록 확률이 낮습니다. (35·30·20·10·5 = 100%)
   COIN_TABLE: [[1, 35], [2, 30], [3, 20], [4, 10], [5, 5]],
@@ -229,41 +232,28 @@ function analyze(b64) {
     // thinkingBudget 0: 답하기 전에 오래 생각하지 않게 해서 속도를 높입니다. 모델이 이 설정을 거부하면(400) 빼고 다시 시도합니다.
     generationConfig: { responseMimeType: 'application/json', temperature: 0, thinkingConfig: { thinkingBudget: 0 } }
   };
-  // 일시적인 오류(429 사용량 초과, 5xx 서버 혼잡)는 잠시 기다렸다가 최대 3번까지 다시 시도합니다.
-  // 404·400 같은 설정 문제는 다시 해도 소용없으므로 바로 다음 모델로 넘어갑니다.
-  // 스크립트 속성 GEMINI_MODEL_FALLBACK 에 다른 모델 이름을 넣으면 그 모델로도 시도합니다.
+  // 모델 이름 순서: 쓰던 모델 -> 스크립트 속성 GEMINI_MODEL_FALLBACK -> (그래도 안 되면) 모델 목록에서 자동으로 고른 flash 계열
   var models = [model];
   var fb = props.getProperty('GEMINI_MODEL_FALLBACK');
   if (fb && fb !== model) models.push(fb);
-  var resp = null, code = 0, t0 = Date.now();
-  outer:
-  for (var mi = 0; mi < models.length; mi++) {
-    model = models[mi];
-    for (var attempt = 0; attempt < 3; attempt++) {
-      try {
-        resp = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
-          method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-          headers: { 'x-goog-api-key': key }, payload: JSON.stringify(body)
-        });
-        code = resp.getResponseCode();
-      } catch (e) {
-        console.error('Gemini fetch failed (모델 ' + model + '): ' + e);
-        resp = null; code = 0;
-      }
-      if (code === 200) break outer;
-      if (code === 400 && body.generationConfig.thinkingConfig) {
-        console.error('모델 ' + model + ' 이(가) thinking 설정을 거부해 빼고 다시 시도합니다: ' + (resp ? resp.getContentText().slice(0, 200) : ''));
-        delete body.generationConfig.thinkingConfig;
-        attempt--;
-        continue;
-      }
-      // 실행 기록(Apps Script 왼쪽 '실행')에서 원인을 볼 수 있습니다. 404는 모델 이름, 400/403은 키나 권한 문제인 경우가 많습니다.
-      console.error('Gemini HTTP ' + code + ' (모델 ' + model + ', 시도 ' + (attempt + 1) + '): ' + (resp ? resp.getContentText().slice(0, 300) : '연결 실패'));
-      var transient = code === 0 || code === 429 || code >= 500;
-      if (!transient) break;
-      if (attempt < 2) Utilities.sleep(1500 * (attempt + 1));
+  var t0 = Date.now();
+  var budget = { left: CONFIG.MAX_CALLS_PER_PHOTO };
+  var call = callGemini_(models, key, body, budget);
+  if (call.limited === 'day') {
+    return { ok: false, manual: true, message: '오늘 사진 분석 횟수를 모두 썼습니다. 내일 다시 쓸 수 있습니다. (직접 표시로 제출할 수 있습니다)' };
+  }
+  if (call.code !== 200 && !call.limited && (call.code === 0 || call.code === 404 || call.code === 429 || call.code >= 500)) {
+    var more = autoModels_(key, models);
+    if (more.length) {
+      console.log('쓰던 모델이 계속 실패해 자동으로 다른 모델을 시도합니다: ' + more.join(', '));
+      call = callGemini_(more, key, body, budget);
     }
   }
+  if (call.limited === 'day') {
+    return { ok: false, manual: true, message: '오늘 사진 분석 횟수를 모두 썼습니다. 내일 다시 쓸 수 있습니다. (직접 표시로 제출할 수 있습니다)' };
+  }
+  var resp = call.resp, code = call.code;
+  model = call.model;
   if (code !== 200) {
     var busy = code === 0 || code === 429 || code >= 500;
     return { ok: false, manual: true, message: busy
@@ -437,6 +427,86 @@ function redeem(email, amount, memo) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/* ---------- Gemini 호출 도우미 ---------- */
+// 모델 이름 목록을 차례로 시도합니다.
+// 일시적인 오류(429 사용량 초과, 5xx 서버 혼잡, 연결 실패)는 잠시 기다렸다가 모델마다 최대 3번,
+// 404·400 같은 설정 문제는 다시 해도 소용없으므로 바로 다음 모델로 넘어갑니다.
+function callGemini_(models, key, body, budget) {
+  var resp = null, code = 0, model = models[0];
+  for (var mi = 0; mi < models.length; mi++) {
+    model = models[mi];
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (budget && budget.left <= 0) return { resp: resp, code: code, model: model, limited: 'photo' };   // 사진 한 장당 최대 요청 수
+      if (!bumpDaily_()) return { resp: resp, code: code, model: model, limited: 'day' };                  // 하루 상한
+      if (budget) budget.left--;
+      try {
+        resp = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
+          method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+          headers: { 'x-goog-api-key': key }, payload: JSON.stringify(body)
+        });
+        code = resp.getResponseCode();
+      } catch (e) {
+        console.error('Gemini fetch failed (모델 ' + model + '): ' + e);
+        resp = null; code = 0;
+      }
+      if (code === 200) return { resp: resp, code: 200, model: model };
+      if (code === 400 && body.generationConfig.thinkingConfig) {
+        console.error('모델 ' + model + ' 이(가) thinking 설정을 거부해 빼고 다시 시도합니다: ' + (resp ? resp.getContentText().slice(0, 200) : ''));
+        delete body.generationConfig.thinkingConfig;
+        attempt--;
+        continue;
+      }
+      // 실행 기록(Apps Script 왼쪽 '실행')에서 원인을 볼 수 있습니다. 404는 모델 이름, 400/403은 키나 권한 문제인 경우가 많습니다.
+      console.error('Gemini HTTP ' + code + ' (모델 ' + model + ', 시도 ' + (attempt + 1) + '): ' + (resp ? resp.getContentText().slice(0, 300) : '연결 실패'));
+      var transient = code === 0 || code === 429 || code >= 500;
+      if (!transient) break;
+      if (attempt < 2) Utilities.sleep(1500 * (attempt + 1));
+    }
+  }
+  return { resp: resp, code: code, model: model };
+}
+
+// 오늘 보낸 Gemini 요청 수를 세어, 상한(MAX_GEMINI_CALLS_PER_DAY)을 넘으면 false 를 돌려줍니다.
+function bumpDaily_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var key = 'calls:' + today_();
+    var n = Number(props.getProperty(key) || 0);
+    if (n >= CONFIG.MAX_GEMINI_CALLS_PER_DAY) return false;
+    if (n === 0) {   // 하루의 첫 요청: 지난 날짜의 기록은 지웁니다.
+      props.getKeys().forEach(function (k) { if (k.indexOf('calls:') === 0 && k !== key) props.deleteProperty(k); });
+    }
+    props.setProperty(key, String(n + 1));
+  } catch (e) { /* 세지 못해도 분석은 막지 않습니다 */ }
+  return true;
+}
+
+// 쓰던 모델이 계속 바쁘거나 없을 때를 위한 자동 대체 모델.
+// 모델 목록에서 사진을 읽을 수 있는 flash 계열을 골라, 안정 버전과 새 버전을 먼저 시도합니다. (목록은 6시간 동안 기억)
+function autoModels_(key, tried) {
+  var cache = CacheService.getScriptCache(), names = null;
+  var cached = cache.get('gm:list');
+  if (cached) { try { names = JSON.parse(cached); } catch (e) { names = null; } }
+  if (!names) {
+    try {
+      var r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', {
+        headers: { 'x-goog-api-key': key }, muteHttpExceptions: true
+      });
+      if (r.getResponseCode() !== 200) return [];
+      names = (JSON.parse(r.getContentText()).models || [])
+        .filter(function (m) { return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0; })
+        .map(function (m) { return String(m.name).replace(/^models\//, ''); });
+      cache.put('gm:list', JSON.stringify(names), 21600);
+    } catch (e) { return []; }
+  }
+  var ok = names.filter(function (n) {
+    return /flash/.test(n) && !/image|tts|live|audio|embed|exp|thinking|native|robotics|computer/.test(n) && tried.indexOf(n) < 0;
+  });
+  var rank = function (n) { return (/preview/.test(n) ? 2 : 0) + (/lite/.test(n) ? 1 : 0); };
+  ok.sort(function (x, y) { return rank(x) - rank(y) || (x < y ? 1 : x > y ? -1 : 0); });
+  return ok.slice(0, 2);
 }
 
 /* ---------- 진단용: Gemini 연결 확인 ---------- */
