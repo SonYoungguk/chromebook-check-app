@@ -3,9 +3,10 @@
 구조: 3단 선반, 한 단에 11칸, 모두 33칸.
       각 단 위쪽 띠에 작은 둥근 LED가 한 줄로 있고, LED 아래에 칸 번호가 인쇄되어 있습니다.
       LED 아래쪽에 크롬북이 세로로 꽂혀 있고, 빈 칸은 케이블만 늘어져 있습니다.
-LED:  초록 = 충전 완료, 빨강 = 충전 중, 꺼짐 = 빈 칸
+LED:  초록 = 충전 완료, 빨강 = 충전 중, 꺼짐 = 충전기가 연결되지 않음
+      (크롬북이 꽂혀 있는데 LED가 꺼진 칸은 '충전 안 됨', 크롬북이 없는 칸은 '비어 있음')
 
-사용법:  python3 tools/make_test_photo.py [시드] [빈 칸 수]
+사용법:  python3 tools/make_test_photo.py [시드] [빈 칸 수] [충전 안 됨 칸 수]
 결과:    test-photos/cart-sample-<시드>.jpg  (사진)
          test-photos/cart-sample-<시드>.answer.json  (정답표)
 
@@ -16,6 +17,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageChops
 
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 n_off = int(sys.argv[2]) if len(sys.argv) > 2 else 6
+n_idle = int(sys.argv[3]) if len(sys.argv) > 3 else 2
 rnd = random.Random(seed)
 
 COLS, ROWS = 11, 3
@@ -25,8 +27,9 @@ left, right = 70, W - 70
 cw = (right - left) / COLS
 shelf_h = 500
 
-off = set(rnd.sample(range(N), n_off))
-state = ["off" if i in off else ("green" if rnd.random() < 0.8 else "red") for i in range(N)]
+picked = rnd.sample(range(N), n_off + n_idle)
+off, idle = set(picked[:n_off]), set(picked[n_off:])
+state = ["off" if i in off else ("idle" if i in idle else ("green" if rnd.random() < 0.8 else "red")) for i in range(N)]
 
 img = Image.new("RGB", (W, H), (214, 214, 208))
 d = ImageDraw.Draw(img)
@@ -52,7 +55,7 @@ for r in range(ROWS):
         cx = left + (c + 0.5) * cw
         cy = y0 + 52
         d.ellipse([cx - 11, cy - 11, cx + 11, cy + 11], fill=(30, 30, 32))              # 안쪽으로 들어간 구멍
-        if state[i] != "off":
+        if state[i] in ("green", "red"):
             gd.ellipse([cx - 16, cy - 10, cx + 16, cy + 22], fill=tuple(int(v * 0.5) for v in COL[state[i]]))
             d.ellipse([cx - 6, cy - 2, cx + 6, cy + 9], fill=COL[state[i]])             # 구멍 아래쪽에 밝은 점
         else:
@@ -66,7 +69,7 @@ for r in range(ROWS):
         i = r * COLS + c
         x = left + c * cw
         d.rectangle([x + cw * 0.78, top + 40, x + cw * 0.94, top + 330], fill=(120, 124, 128))   # 회색 거치대
-        if state[i] != "off":
+        if state[i] != "off":                                # 크롬북이 꽂힌 칸 (충전 안 됨 포함)
             lx = x + cw * 0.22
             d.polygon([(lx, top + 60), (lx + cw * 0.5, top + 52), (lx + cw * 0.5, top + 330), (lx, top + 336)], fill=(228, 228, 226), outline=(150, 150, 150))
             d.line([(lx + 4, top + 60), (lx + 4, top + 336)], fill=(60, 60, 64), width=3)
@@ -88,13 +91,14 @@ os.makedirs(out_dir, exist_ok=True)
 base = os.path.join(out_dir, "cart-sample-%02d" % seed)
 img.save(base + ".jpg", quality=90)
 
-KO = {"red": "충전 중", "green": "충전 완료", "off": "비어 있음"}
+KO = {"red": "충전 중", "green": "충전 완료", "idle": "충전 안 됨", "off": "비어 있음"}
 ans = {
     "설명": "3단 선반, 한 단에 11칸. 윗단 1~11, 가운데 단 12~22, 아랫단 23~33 (LED 아래 인쇄된 번호 기준)",
     "slots": state,
-    "빈 칸 번호": [i + 1 for i, s in enumerate(state) if s == "off"],
-    "요약": {KO[k]: state.count(k) for k in ("red", "green", "off")},
+    "빈 칸 번호(크롬북 없음)": [i + 1 for i, s in enumerate(state) if s == "off"],
+    "충전 안 됨 번호(크롬북은 있는데 LED 꺼짐)": [i + 1 for i, s in enumerate(state) if s == "idle"],
+    "요약": {KO[k]: state.count(k) for k in ("red", "green", "idle", "off")},
 }
 with open(base + ".answer.json", "w", encoding="utf8") as f:
     json.dump(ans, f, ensure_ascii=False, indent=2)
-print(base + ".jpg", ans["요약"], ans["빈 칸 번호"])
+print(base + ".jpg", ans["요약"], "비어 있음", ans["빈 칸 번호(크롬북 없음)"], "충전 안 됨", ans["충전 안 됨 번호(크롬북은 있는데 LED 꺼짐)"])

@@ -7,8 +7,15 @@
     "off",
     "off",
     "green",
+    "red",
+    "green",
+    "off",
+    "green",
+    "green",
+    "green",
     "green",
     "red",
+    "idle",
     "off",
     "green",
     "green",
@@ -16,36 +23,33 @@
     "green",
     "green",
     "green",
-    "off",
-    "red",
     "red",
     "green",
-    "green",
-    "green",
+    "idle",
     "red",
     "green",
     "green",
-    "off",
     "green",
-    "green",
-    "green",
-    "green",
-    "green",
+    "red",
     "green",
     "green",
     "off"
   ],
-  "빈 칸 번호": [
+  "빈 칸 번호(크롬북 없음)": [
     4,
     5,
     9,
     16,
-    25,
     33
   ],
+  "충전 안 됨 번호(크롬북은 있는데 LED 꺼짐)": [
+    15,
+    25
+  ],
   "요약": {
-    "충전 중": 4,
-    "충전 완료": 23,
-    "비어 있음": 6
+    "충전 중": 5,
+    "충전 완료": 21,
+    "충전 안 됨": 2,
+    "비어 있음": 5
   }
 }

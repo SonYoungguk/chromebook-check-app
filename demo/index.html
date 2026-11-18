@@ -63,6 +63,8 @@
   .st-green .dot { background: var(--green); }
   .st-green .dot::after { content: "✓"; }
   .st-off .dot { border: 2px solid var(--offc); background: transparent; }
+  .st-idle .dot { background: var(--warn); color: #1b1300; font-weight: 800; }
+  .st-idle .dot::after { content: "!"; }
   .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13.5px; }
   .legend span, .counts span { display: inline-flex; align-items: center; gap: 6px; }
   .legend .dot, .counts .dot { display: inline-block; vertical-align: middle; }
@@ -195,7 +197,8 @@
         <div class="legend" aria-label="표시등 안내">
           <span><i class="dot" style="background:var(--red)"></i>충전 중 (빨간불)</span>
           <span><i class="dot" style="background:var(--green)">✓</i>충전 완료 (초록불)</span>
-          <span><i class="dot" style="border:2px solid var(--offc)"></i>비어 있음 (불 꺼짐)</span>
+          <span><i class="dot" style="background:var(--warn);color:#1b1300">!</i>충전 안 됨 (크롬북은 있는데 불 꺼짐)</span>
+          <span><i class="dot" style="border:2px solid var(--offc)"></i>비어 있음 (크롬북 없음)</span>
         </div>
         <div class="scroll"><div class="cart" id="cart"></div></div>
         <div class="chooser" id="chooser"></div>
@@ -277,7 +280,7 @@
 /* ===== 시연용 가짜 서버 (실제 앱에서는 구글 앱스 스크립트가 이 역할을 합니다) ===== */
 (function () {
   var REASONS = ['수업 중 사용 중', '수리 맡김', '분실·행방 확인 중', '충전기 고장', '집에 가져감', '기타'];
-  var CH = { red: 'R', green: 'G', off: 'O', unused: 'X' };
+  var CH = { red: 'R', green: 'G', idle: 'N', off: 'O', unused: 'X' };
   function range(a, b) { var r = []; for (var i = a; i < b; i++) r.push(i); return r; }
   // 반마다 보관함이 있고, 반 인원보다 많은 칸은 사용하지 않는 칸입니다. (실제 앱에서는 '보관함' 시트에 적습니다)
   var CARTS = [
@@ -285,9 +288,10 @@
     { name: '3학년 2반', size: 30, used: 29, unused: [14].concat(range(30, 33)) }
   ];
   var MY = CARTS[0];
-  // 예시 분석 결과: 실제 보관함 사진(real-cart-01)을 사람이 읽은 값과 같음. 빈 칸 7, 17, 22, 26, 28~33번 (29번 이후는 1반의 미사용 칸이라 무시됨)
+  // 예시 분석 결과: 실제 보관함 사진을 사람이 읽은 값과 같음.
+  // 크롬북 없음(빈 칸) 7, 26, 28~33번 / 크롬북은 있는데 LED 꺼짐(충전 안 됨) 17, 22번 (29번 이후는 1반의 미사용 칸이라 무시됨)
   var SAMPLE = ['green', 'green', 'green', 'green', 'green', 'green', 'off', 'green', 'green', 'green', 'green',
-                'green', 'green', 'green', 'green', 'green', 'off', 'green', 'green', 'green', 'green', 'off',
+                'green', 'green', 'green', 'green', 'green', 'idle', 'green', 'green', 'green', 'green', 'idle',
                 'green', 'green', 'green', 'off', 'green', 'off', 'off', 'off', 'off', 'off', 'off'];
   function p2(n) { return String(n).padStart(2, '0'); }
   function ymd(d) { return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); }
@@ -304,6 +308,7 @@
         for (var i = 0; i < 33; i++) {
           if (cart.unused.indexOf(i) >= 0) { slots += 'X'; continue; }
           var off = (i === 6 && k % 2 === 0) || (i === 19 && k % 3 === 0) || i === 26 || (i === 7 && k < 5 && ci === 0);
+          if (i === 16 && k % 4 === 1) { slots += 'N'; continue; }
           slots += off ? 'O' : (i % 2 ? 'G' : 'R');
           if (off) reasons[String(i + 1)] = rs[(i + k) % 5];
         }
@@ -387,7 +392,7 @@
     document.documentElement.style.setProperty('--cols', COLS);
   }
   applyLayout();
-  var ST = { red: '충전 중', green: '충전 완료', off: '비어 있음', unused: '미사용' };
+  var ST = { red: '충전 중', green: '충전 완료', idle: '충전 안 됨', off: '비어 있음', unused: '미사용' };
   var PERIOD = { morning: '아침', afternoon: '방과 후' };
   var $ = function (s) { return document.querySelector(s); };
   var esc = function (t) { return String(t).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
@@ -538,7 +543,7 @@
     var el = $('#chooser');
     if (S.sel == null) { el.innerHTML = '<span class="muted">칸을 누르면 상태를 고칠 수 있습니다. ?가 붙은 칸은 꼭 확인해 주세요.</span>'; return; }
     var cur = S.slots[S.sel];
-    el.innerHTML = '<b>' + (S.sel + 1) + '번 칸</b>' + ['red', 'green', 'off'].map(function (k) {
+    el.innerHTML = '<b>' + (S.sel + 1) + '번 칸</b>' + ['red', 'green', 'idle', 'off'].map(function (k) {
       return '<button type="button" class="btn" data-st="' + k + '" aria-pressed="' + (cur === k) + '">' + ST[k] + '</button>';
     }).join('');
   }
@@ -548,12 +553,14 @@
     renderGrid(); renderChooser(); renderCounts(); renderReasons(); updateSubmit();
   });
   function renderCounts() {
-    var c = { red: 0, green: 0, off: 0, unused: 0 }; S.slots.forEach(function (s) { c[s]++; });
+    var c = { red: 0, green: 0, idle: 0, off: 0, unused: 0 }; S.slots.forEach(function (s) { c[s]++; });
     $('#counts').innerHTML =
       '<span><i class="dot" style="background:var(--red)"></i>충전 중 ' + c.red + '</span>' +
       '<span><i class="dot" style="background:var(--green)">✓</i>충전 완료 ' + c.green + '</span>' +
+      '<span><i class="dot" style="background:var(--warn);color:#1b1300">!</i>충전 안 됨 ' + c.idle + '</span>' +
       '<span><i class="dot" style="border:2px solid var(--offc)"></i>비어 있음 ' + c.off + '</span>' +
-      (c.unused ? '<span class="muted">점선 칸 ' + c.unused + '개는 사용하지 않는 칸입니다</span>' : '');
+      (c.unused ? '<span class="muted">점선 칸 ' + c.unused + '개는 사용하지 않는 칸입니다</span>' : '') +
+      (c.idle ? '<span class="muted" style="flex-basis:100%">충전 안 됨 ' + c.idle + '칸은 크롬북은 있지만 충전기가 연결되지 않았습니다. 연결할 수 있으면 연결해 주세요.</span>' : '');
   }
 
   /* ----- 사유 ----- */
@@ -671,7 +678,8 @@
   function md(s) { var a = s.split('-'); return +a[1] + '/' + +a[2]; }
   function reasonKey(r) { return String(r).indexOf('기타') === 0 ? '기타' : r; }
   function offCount(slots) { return (slots.match(/O/g) || []).length; }
-  var CH2ST = { R: 'red', G: 'green', O: 'off', X: 'unused' };
+  function idleCount(slots) { return (slots.match(/N/g) || []).length; }
+  var CH2ST = { R: 'red', G: 'green', N: 'idle', O: 'off', X: 'unused' };
   var CART = '', MASK = {}, DREC = [];
   function maskOf(name) { return MASK[name] || []; }
 
@@ -746,6 +754,7 @@
     $('#d-tiles').innerHTML =
       tile('오늘 제출', (tm + ta) + ' / 2', '아침 ' + (tm ? '제출' : '미제출') + ' · 방과 후 ' + (ta ? '제출' : '미제출')) +
       tile('마지막 점검의 빈 칸', last ? offCount(last.slots) + '칸' : '—', last ? md(last.date) + ' ' + (last.period === 'morning' ? '아침' : '방과 후') : '기록 없음') +
+      tile('마지막 점검의 충전 안 됨', last ? idleCount(last.slots) + '칸' : '—', last ? '크롬북은 있는데 LED 꺼짐' : '기록 없음') +
       tile('제출률 (평일 기준)', exp ? Math.round(got / exp * 100) + '%' : '—', exp ? got + ' / ' + exp + '회 제출' : '기간 내 평일 없음') +
       tile('학생이 고친 칸', avg == null ? '—' : avg.toFixed(1) + '칸', '제출 1회당 평균 (AI 판정 대비)');
   }
@@ -761,12 +770,12 @@
     var ks = Object.keys(reasons).sort(function (a, b) { return a - b; });
     return ks.length ? '<div class="chips">' + ks.map(function (k) { return '<span class="chip">' + esc(k) + '번 · ' + esc(reasons[k]) + '</span>'; }).join('') + '</div>' : '<p class="muted">모든 칸에 크롬북이 연결되어 있습니다.</p>';
   }
-  var LEGEND = '<div class="legend"><span><i class="dot" style="background:var(--red)"></i>충전 중</span><span><i class="dot" style="background:var(--green)">✓</i>충전 완료</span><span><i class="dot" style="border:2px solid var(--offc)"></i>비어 있음</span></div>';
+  var LEGEND = '<div class="legend"><span><i class="dot" style="background:var(--red)"></i>충전 중</span><span><i class="dot" style="background:var(--green)">✓</i>충전 완료</span><span><i class="dot" style="background:var(--warn);color:#1b1300">!</i>충전 안 됨</span><span><i class="dot" style="border:2px solid var(--offc)"></i>비어 있음</span></div>';
 
   function renderLatest() {
     var el = $('#d-latest'), last = DREC[DREC.length - 1];
     if (!last) { el.innerHTML = '<h2>가장 최근 보관함</h2><p class="empty">아직 제출된 점검이 없습니다.</p>'; return; }
-    el.innerHTML = '<h2>가장 최근 보관함</h2><p class="muted">' + esc(md(last.date) + ' ' + (last.period === 'morning' ? '아침' : '방과 후') + ' · ' + last.by + ' 제출 · 비어 있는 칸 ' + offCount(last.slots) + '개') + '</p>' +
+    el.innerHTML = '<h2>가장 최근 보관함</h2><p class="muted">' + esc(md(last.date) + ' ' + (last.period === 'morning' ? '아침' : '방과 후') + ' · ' + last.by + ' 제출 · 비어 있는 칸 ' + offCount(last.slots) + '개' + (idleCount(last.slots) ? ' · 충전 안 됨 ' + idleCount(last.slots) + '개' : '')) + '</p>' +
       LEGEND + miniGrid(last.slots, last.reasons) + reasonChips(last.reasons);
   }
 
@@ -841,7 +850,7 @@
   function renderRecs(recs) {
     var list = recs.slice().reverse().slice(0, 20);
     $('#d-records').innerHTML = '<h2>제출 기록</h2><p class="muted">최근 20건 · 눌러서 펼치면 칸 상태가 보입니다.</p>' + (list.length ? '<div class="recs">' + list.map(function (r) {
-      return '<details><summary><b>' + esc(md(r.date) + ' ' + (r.period === 'morning' ? '아침' : '방과 후')) + '</b><span>' + esc(r.by) + '</span><span class="muted">빈 칸 ' + offCount(r.slots) + '개' + (r.coin ? ' · 코인 ' + r.coin : '') + '</span></summary>' +
+      return '<details><summary><b>' + esc(md(r.date) + ' ' + (r.period === 'morning' ? '아침' : '방과 후')) + '</b><span>' + esc(r.by) + '</span><span class="muted">빈 칸 ' + offCount(r.slots) + '개' + (idleCount(r.slots) ? ' · 충전 안 됨 ' + idleCount(r.slots) + '개' : '') + (r.coin ? ' · 코인 ' + r.coin : '') + '</span></summary>' +
         '<div class="body">' + miniGrid(r.slots, r.reasons) + reasonChips(r.reasons) +
         '<p class="muted">' + esc(r.when + ' · ' + r.mode + (r.edited ? ' · 학생이 ' + r.edited + '칸 수정' : '')) + '</p></div></details>';
     }).join('') + '</div>' : '<p class="empty">아직 제출된 점검이 없습니다.</p>');

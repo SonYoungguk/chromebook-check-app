@@ -26,12 +26,13 @@ var HEAD = {
   students: ['이메일', '이름', '당번(O)', '반(보관함 이름)', '번호'],
   carts: ['보관함(반)', '사용하는 칸 수', '사용하지 않는 칸 (선택, 쉼표로 구분)'],
   records: ['시각', '날짜', '시간대', '보관함', '제출자 이메일', '제출자 이름',
-            '칸 상태 (R충전 중 G완료 O비어 있음 X미사용)', '비어 있는 칸과 사유', 'AI 판정', '학생이 고친 칸 수', '방식', '코인 지급'],
+            '칸 상태 (R충전 중 G완료 N충전 안 됨 O비어 있음 X미사용)', '비어 있는 칸과 사유', 'AI 판정', '학생이 고친 칸 수', '방식', '코인 지급'],
   ledger: ['시각', '이메일', '이름', '코인', '구분', '메모'],
   teachers: ['이메일']
 };
 var PERIOD_KO = { morning: '아침', afternoon: '방과 후' };
-var KEY2CH = { red: 'R', green: 'G', off: 'O', unused: 'X' };
+// 칸 상태: red 충전 중, green 충전 완료, idle 크롬북은 있는데 충전 안 됨(LED 꺼짐), off 크롬북 없음(빈 칸), unused 사용하지 않는 칸
+var KEY2CH = { red: 'R', green: 'G', idle: 'N', off: 'O', unused: 'X' };
 
 /* ---------- 웹앱 진입 ---------- */
 function doGet() {
@@ -204,21 +205,23 @@ function analyze(b64) {
   if (!key) return { ok: false, manual: true, message: '사진 분석이 아직 설정되지 않았습니다.' };
   var model = props.getProperty('GEMINI_MODEL') || CONFIG.GEMINI_MODEL;
 
-  // 실제 보관함 사진 기준: 각 단 위쪽 띠에 작은 둥근 표시등이 한 줄로 있고, 표시등 아래에 칸 번호가 인쇄되어 있습니다.
+  // 실제 보관함 사진 기준: 각 단 위쪽 띠에 작은 둥근 LED가 한 줄로 있고, LED 아래에 칸 번호가 인쇄되어 있습니다.
+  // LED는 '충전기가 연결됐는지'만 알려 주므로, 크롬북이 있는지는 따로 판정합니다.
   var SL = CONFIG.SLOTS, CO = CONFIG.COLS, RO = Math.ceil(SL / CO), spans = [], ri;
   for (ri = 0; ri < RO; ri++) spans.push((ri * CO + 1) + '~' + Math.min(SL, (ri + 1) * CO));
+  var grid = function (what) { return '[' + spans.map(function () { return '[' + CO + '개: ' + what + ']'; }).join(', ') + ']'; };
   var prompt = [
-    '이 사진은 학교 크롬북 충전 보관함을 찍은 것입니다. 보관함은 ' + RO + '단 선반이고 한 단에 ' + CO + '칸씩, 모두 ' + SL + '칸입니다.',
-    '각 단의 위쪽 띠에는 칸마다 작은 둥근 LED 표시등이 한 줄로 있고, 표시등 바로 아래에 칸 번호가 인쇄되어 있습니다. 맨 위 단부터 ' + spans.join(', ') + '번입니다.',
-    '판정은 표시등을 기준으로 합니다.',
-    '- green: 표시등이 초록색으로 켜져 있음 (충전 완료)',
-    '- red: 표시등이 빨간색으로 켜져 있음 (충전 중)',
-    '- off: 표시등이 꺼져 있어 어두운 검은색 구멍으로 보임. 이런 칸에는 보통 크롬북이 없고 케이블만 늘어져 있습니다.',
-    '표시등은 작고 안쪽으로 들어가 있어서, 켜진 표시등은 구멍 아래쪽에 밝은 초록 점으로 보일 수 있습니다. 빛이 반사되어 하얗게 보여 켜졌는지 꺼졌는지 알 수 없으면 그 칸은 uncertain에 적으세요.',
-    '표시등과 그 아래 번호를 정확히 짝지어 한 단씩, 왼쪽 칸부터 차례로 하나도 건너뛰지 말고 판정하세요. 크롬북 본체는 선반 아래에 있고 표시등과 위치가 어긋나 보일 수 있으니, 크롬북 위치가 아니라 표시등과 번호로 칸을 구분하세요.',
-    '확신이 없는 칸은 uncertain에 번호(1~' + SL + ')로 적으세요.',
-    '다른 말 없이 JSON 객체 하나만 답하세요. 형식: {"rows": [' + spans.map(function () { return '[' + CO + '개]'; }).join(', ') + '], "uncertain": [7, 20], "note": "한 문장 메모"}',
-    '각 줄은 green, red, off 중 하나인 문자열 정확히 ' + CO + '개입니다.'
+    '이 사진은 학교 크롬북 충전 보관함을 찍은 것입니다. 보관함은 ' + RO + '단 선반이고 한 단에 ' + CO + '칸씩, 모두 ' + SL + '칸입니다. 칸 번호는 맨 위 단부터 ' + spans.join(', ') + '번이고, 한 단 안에서는 왼쪽에서 오른쪽 순서입니다.',
+    '각 단 위쪽 띠에는 칸마다 작은 둥근 LED 표시등이 한 줄로 있고, LED 바로 아래에 칸 번호가 인쇄되어 있습니다. 이 LED 띠는 선반보다 좁게 가운데에 모여 있을 수 있으니 번호로 짝을 맞추세요.',
+    '각 단 아래쪽에는 크롬북을 세로로 꽂는 칸이 ' + CO + '개 있고, 칸마다 위에서 코일 케이블이 늘어져 있습니다. 한 단의 칸을 왼쪽부터 세어 1번째, 2번째, ... 칸으로 삼으세요. 크롬북이 꽂힌 칸에는 얇은 흰색 또는 회색 크롬북 본체가 보이고, 빈 칸에는 회색 거치대와 늘어진 케이블만 보입니다.',
+    '칸마다 두 가지를 따로 판정하세요.',
+    '1) laptop: 그 칸에 크롬북 본체가 꽂혀 있으면 "yes", 없으면 "no". 케이블이 크롬북에 연결되지 않고 늘어져 있어도 크롬북은 꽂혀 있을 수 있습니다.',
+    '2) led: 그 칸 번호의 LED가 초록색으로 켜져 있으면 "green"(충전 완료), 빨간색으로 켜져 있으면 "red"(충전 중), 꺼져서 어두운 구멍으로 보이면 "off".',
+    'LED는 작고 안쪽으로 들어가 있어서, 켜진 LED는 구멍 아래쪽에 밝은 초록 점으로 보일 수 있습니다. 빛이 반사되어 하얗게 보여 켜졌는지 꺼졌는지 알 수 없으면 그 칸은 uncertain에 적으세요.',
+    '크롬북이 있어도 충전기가 연결되지 않으면 LED가 꺼져 있습니다. LED가 꺼진 것만 보고 크롬북이 없다고 판단하지 마세요.',
+    '한 단씩, 왼쪽 칸부터 차례로 하나도 건너뛰지 말고 판정하세요. 확신이 없는 칸은 uncertain에 번호(1~' + SL + ')로 적으세요.',
+    '다른 말 없이 JSON 객체 하나만 답하세요. 형식: {"laptop": ' + grid('"yes" 또는 "no"') + ', "led": ' + grid('"green", "red", "off" 중 하나') + ', "uncertain": [7, 20], "note": "한 문장 메모"}',
+    'laptop의 각 줄은 yes 또는 no, led의 각 줄은 green, red, off 중 하나인 문자열 정확히 ' + CO + '개입니다.'
   ].join('\n');
 
   var body = {
@@ -281,17 +284,36 @@ function analyze(b64) {
     return { ok: false, manual: true, message: 'AI 응답을 읽지 못했습니다.' };
   }
   console.log('Gemini 응답 (모델 ' + model + '): ' + text.slice(0, 800));
-  var slots = parsed && parsed.slots;
-  if (!slots && parsed && Array.isArray(parsed.rows)) slots = [].concat.apply([], parsed.rows);
+  var flat = function (a) { return Array.isArray(a) ? [].concat.apply([], a) : []; };
+  var slots = null, conflict = [], readCount = 0;
+  if (parsed && Array.isArray(parsed.laptop) && Array.isArray(parsed.led)) {
+    // 크롬북 유무(laptop)와 LED 색(led)을 따로 받아 칸 상태로 합칩니다.
+    var lp = flat(parsed.laptop), ld = flat(parsed.led);
+    readCount = Math.min(lp.length, ld.length);
+    if (lp.length === CONFIG.SLOTS && ld.length === CONFIG.SLOTS &&
+        lp.every(function (v) { return v === 'yes' || v === 'no'; }) && ld.every(function (v) { return v === 'green' || v === 'red' || v === 'off'; })) {
+      slots = ld.map(function (led, i) {
+        var has = lp[i] === 'yes';
+        if (led === 'off') return has ? 'idle' : 'off';   // 크롬북은 있는데 LED가 꺼짐 = 충전 안 됨
+        if (!has) conflict.push(i);                       // LED는 켜졌는데 크롬북이 안 보임: 가려졌을 가능성이라 확인하게 함
+        return led;
+      });
+    }
+  } else if (parsed) {
+    // 예전 형식(칸 상태를 바로 적은 slots 또는 rows)도 받습니다.
+    var old = parsed.slots || (Array.isArray(parsed.rows) ? flat(parsed.rows) : null);
+    if (Array.isArray(old)) { readCount = old.length; slots = old; }
+  }
   var valid = Array.isArray(slots) && slots.length === CONFIG.SLOTS &&
-    slots.every(function (v) { return v === 'red' || v === 'green' || v === 'off'; });
-  if (!valid) return { ok: false, manual: true, message: 'AI가 ' + CONFIG.SLOTS + '칸을 모두 읽지 못했습니다. (읽은 칸 ' + (Array.isArray(slots) ? slots.length : 0) + '개)' };
+    slots.every(function (v) { return v === 'red' || v === 'green' || v === 'idle' || v === 'off'; });
+  if (!valid) return { ok: false, manual: true, message: 'AI가 ' + CONFIG.SLOTS + '칸을 올바르게 읽지 못했습니다. (읽은 칸 ' + readCount + '개)' };
 
   // 사용하지 않는 칸은 AI가 어떻게 읽었든 '미사용'으로 덮어씁니다.
   slots = slots.slice();
   cart.unused.forEach(function (i) { slots[i] = 'unused'; });
   var unc = (Array.isArray(parsed.uncertain) ? parsed.uncertain : [])
     .map(function (n) { return Number(n) - 1; })
+    .concat(conflict)
     .filter(function (i, idx, a) { return i >= 0 && i < CONFIG.SLOTS && a.indexOf(i) === idx && cart.unused.indexOf(i) < 0; });
   if (unc.length > CONFIG.MAX_UNCERTAIN) {
     return { ok: false, retake: true, message: '사진이 흐리거나 보관함 전체가 보이지 않습니다. 다시 찍어 주세요.' };
@@ -311,7 +333,7 @@ function submit(p) {
   var slots = p.slots;
   // 사용하는 칸은 red·green·off, 사용하지 않는 칸은 unused 여야 합니다.
   if (!Array.isArray(slots) || slots.length !== CONFIG.SLOTS || !slots.every(function (v, i) {
-    return cart.unused.indexOf(i) >= 0 ? v === 'unused' : (v === 'red' || v === 'green' || v === 'off');
+    return cart.unused.indexOf(i) >= 0 ? v === 'unused' : (v === 'red' || v === 'green' || v === 'idle' || v === 'off');
   })) throw new Error('칸 상태가 올바르지 않습니다. 화면을 새로 고친 뒤 다시 제출해 주세요.');
 
   var reasons = p.reasons || {}, detail = [];

@@ -17,7 +17,7 @@ MOCK = r"""<script>
 /* ===== 시연용 가짜 서버 (실제 앱에서는 구글 앱스 스크립트가 이 역할을 합니다) ===== */
 (function () {
   var REASONS = ['수업 중 사용 중', '수리 맡김', '분실·행방 확인 중', '충전기 고장', '집에 가져감', '기타'];
-  var CH = { red: 'R', green: 'G', off: 'O', unused: 'X' };
+  var CH = { red: 'R', green: 'G', idle: 'N', off: 'O', unused: 'X' };
   function range(a, b) { var r = []; for (var i = a; i < b; i++) r.push(i); return r; }
   // 반마다 보관함이 있고, 반 인원보다 많은 칸은 사용하지 않는 칸입니다. (실제 앱에서는 '보관함' 시트에 적습니다)
   var CARTS = [
@@ -25,9 +25,10 @@ MOCK = r"""<script>
     { name: '3학년 2반', size: 30, used: 29, unused: [14].concat(range(30, 33)) }
   ];
   var MY = CARTS[0];
-  // 예시 분석 결과: 실제 보관함 사진(real-cart-01)을 사람이 읽은 값과 같음. 빈 칸 7, 17, 22, 26, 28~33번 (29번 이후는 1반의 미사용 칸이라 무시됨)
+  // 예시 분석 결과: 실제 보관함 사진을 사람이 읽은 값과 같음.
+  // 크롬북 없음(빈 칸) 7, 26, 28~33번 / 크롬북은 있는데 LED 꺼짐(충전 안 됨) 17, 22번 (29번 이후는 1반의 미사용 칸이라 무시됨)
   var SAMPLE = ['green', 'green', 'green', 'green', 'green', 'green', 'off', 'green', 'green', 'green', 'green',
-                'green', 'green', 'green', 'green', 'green', 'off', 'green', 'green', 'green', 'green', 'off',
+                'green', 'green', 'green', 'green', 'green', 'idle', 'green', 'green', 'green', 'green', 'idle',
                 'green', 'green', 'green', 'off', 'green', 'off', 'off', 'off', 'off', 'off', 'off'];
   function p2(n) { return String(n).padStart(2, '0'); }
   function ymd(d) { return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); }
@@ -44,6 +45,7 @@ MOCK = r"""<script>
         for (var i = 0; i < 33; i++) {
           if (cart.unused.indexOf(i) >= 0) { slots += 'X'; continue; }
           var off = (i === 6 && k % 2 === 0) || (i === 19 && k % 3 === 0) || i === 26 || (i === 7 && k < 5 && ci === 0);
+          if (i === 16 && k % 4 === 1) { slots += 'N'; continue; }
           slots += off ? 'O' : (i % 2 ? 'G' : 'R');
           if (off) reasons[String(i + 1)] = rs[(i + k) % 5];
         }
