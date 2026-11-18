@@ -53,7 +53,7 @@
   .status { font-size: 14px; min-height: 1.5em; }
   .status.err { color: var(--warn); }
   .scroll { overflow-x: auto; }
-  .cart { min-width: 456px; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 6px; background: var(--cart); padding: 10px; border-radius: 10px; }
+  .cart { min-width: 420px; display: grid; grid-template-columns: repeat(var(--cols, 11), minmax(0, 1fr)); gap: 6px; background: var(--cart); padding: 10px; border-radius: 10px; }
   .cell { position: relative; font: inherit; font-weight: 700; font-size: 11px; color: var(--bay-ink); background: var(--bay); border: 2px solid transparent; border-radius: 6px; aspect-ratio: 1 / 1.1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; cursor: pointer; padding: 0; }
   .cell.sel { border-color: var(--accent); background: var(--accent-soft); color: var(--fg); }
   .cell.edited { border-style: dashed; border-color: var(--accent); }
@@ -114,7 +114,7 @@
   .tile .v { font-size: 30px; font-weight: 700; line-height: 1.2; }
   .tile .s { font-size: 12.5px; color: var(--muted); }
   .card h2 + .muted { margin-top: -8px; }
-  .mini { min-width: 0; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 4px; background: var(--cart); padding: 8px; border-radius: 10px; }
+  .mini { min-width: 0; display: grid; grid-template-columns: repeat(var(--cols, 11), minmax(0, 1fr)); gap: 4px; background: var(--cart); padding: 8px; border-radius: 10px; }
   .mc { font-weight: 700; font-size: 10px; color: var(--bay-ink); background: var(--bay); border-radius: 5px; aspect-ratio: 1 / 1.05; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
   .mc .dot { width: 11px; height: 11px; font-size: 8px; line-height: 11px; }
   .st-off .dot { border-width: 2px; }
@@ -123,7 +123,7 @@
     .mc { font-size: 9px; gap: 2px; }
     .mc .dot { width: 9px; height: 9px; font-size: 7px; line-height: 9px; }
   }
-  .heat { min-width: 0; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 2px; }
+  .heat { min-width: 0; display: grid; grid-template-columns: repeat(var(--cols, 11), minmax(0, 1fr)); gap: 2px; }
   .hc { font-size: 10.5px; font-weight: 600; border-radius: 4px; aspect-ratio: 1 / .8; display: flex; align-items: center; justify-content: center; border: 1px solid var(--line); }
   .ramp { display: inline-block; width: 120px; height: 10px; border-radius: 5px; vertical-align: middle; background: linear-gradient(to right, color-mix(in srgb, var(--seq) 12%, var(--surface)), var(--seq)); }
   .rank { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
@@ -281,14 +281,14 @@
   function range(a, b) { var r = []; for (var i = a; i < b; i++) r.push(i); return r; }
   // 반마다 보관함이 있고, 반 인원보다 많은 칸은 사용하지 않는 칸입니다. (실제 앱에서는 '보관함' 시트에 적습니다)
   var CARTS = [
-    { name: '3학년 1반', size: 28, used: 28, unused: range(28, 36) },
-    { name: '3학년 2반', size: 30, used: 29, unused: [14].concat(range(30, 36)) }
+    { name: '3학년 1반', size: 28, used: 28, unused: range(28, 33) },
+    { name: '3학년 2반', size: 30, used: 29, unused: [14].concat(range(30, 33)) }
   ];
   var MY = CARTS[0];
-  // 예시 분석 결과: 시험용 사진(cart-sample-01)의 정답과 같음. 빈 칸 5, 8, 9, 17, 32번 (32번은 1반의 미사용 칸이라 무시됨)
-  var SAMPLE = ['red','green','green','green','off','green','red','off','off','green','red','red',
-                'red','green','red','red','off','green','green','green','red','green','red','red',
-                'red','red','red','red','red','red','green','off','red','red','red','red'];
+  // 예시 분석 결과: 실제 보관함 사진(real-cart-01)을 사람이 읽은 값과 같음. 빈 칸 7, 17, 22, 26, 28~33번 (29번 이후는 1반의 미사용 칸이라 무시됨)
+  var SAMPLE = ['green', 'green', 'green', 'green', 'green', 'green', 'off', 'green', 'green', 'green', 'green',
+                'green', 'green', 'green', 'green', 'green', 'off', 'green', 'green', 'green', 'green', 'off',
+                'green', 'green', 'green', 'off', 'green', 'off', 'off', 'off', 'off', 'off', 'off'];
   function p2(n) { return String(n).padStart(2, '0'); }
   function ymd(d) { return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); }
   var today = new Date(), recent = [];
@@ -301,7 +301,7 @@
       ['morning', 'afternoon'].forEach(function (per) {
         if (ci === 1 && k === 3 && per === 'morning') return;
         var slots = '', reasons = {};
-        for (var i = 0; i < 36; i++) {
+        for (var i = 0; i < 33; i++) {
           if (cart.unused.indexOf(i) >= 0) { slots += 'X'; continue; }
           var off = (i === 6 && k % 2 === 0) || (i === 19 && k % 3 === 0) || i === 26 || (i === 7 && k < 5 && ci === 0);
           slots += off ? 'O' : (i % 2 ? 'G' : 'R');
@@ -335,13 +335,13 @@
   }
   var impl = {
     getInit: function () {
-      return { email: 'me@demo', name: me.name, student: true, teacher: true, duty: true, cart: MY.name, unused: MY.unused, notice: '', reasons: REASONS,
+      return { email: 'me@demo', name: me.name, student: true, teacher: true, duty: true, cart: MY.name, unused: MY.unused, notice: '', reasons: REASONS, slots: 33, cols: 11,
         requireAi: true, status: todayBy(MY.name), coins: me.total, history: history.slice().reverse() };
     },
     analyze: function () {
       var slots = SAMPLE.slice();
       MY.unused.forEach(function (i) { slots[i] = 'unused'; });
-      return { ok: true, analysisId: 'demo', slots: slots, uncertain: [8], note: '시연용 예시 결과입니다 (올린 사진과 관계없음)' };
+      return { ok: true, analysisId: 'demo', slots: slots, uncertain: [0], note: '시연용 예시 결과입니다 (올린 사진과 관계없음)' };
     },
     submit: function (p) {
       var reasons = p.reasons || {}, empties = {};
@@ -356,7 +356,7 @@
     },
     teacherData: function () {
       var by = {}; CARTS.forEach(function (c) { by[c.name] = todayBy(c.name); });
-      return { today: ymd(today), carts: CARTS, todayByCart: by, recent: JSON.parse(JSON.stringify(recent.slice(-600))),
+      return { today: ymd(today), slots: 33, cols: 11, carts: CARTS, todayByCart: by, recent: JSON.parse(JSON.stringify(recent.slice(-600))),
         students: students.map(function (s) { return { email: s.email, name: s.name, duty: s.duty, total: s.total, cart: s.cart, no: s.no }; }) };
     },
     redeem: function (email, amount) {
@@ -379,7 +379,14 @@
 </script>
 <script>
 (function () {
-  var N = 36, COLS = 12;
+  var N = 33, COLS = 11;
+  // 칸 수와 한 줄 칸 수는 서버 설정(보관함 구조)을 따릅니다.
+  function applyLayout(o) {
+    if (o && o.slots) N = o.slots;
+    if (o && o.cols) COLS = o.cols;
+    document.documentElement.style.setProperty('--cols', COLS);
+  }
+  applyLayout();
   var ST = { red: '충전 중', green: '충전 완료', off: '비어 있음', unused: '미사용' };
   var PERIOD = { morning: '아침', afternoon: '방과 후' };
   var $ = function (s) { return document.querySelector(s); };
@@ -402,6 +409,7 @@
 
   run('getInit').then(function (me) {
     ME = me;
+    applyLayout(me);
     if (!me.student && !me.teacher) {
       $('#who').textContent = me.email;
       $('#blocked').hidden = false;
@@ -452,7 +460,7 @@
     return new Promise(function (res, rej) {
       var url = URL.createObjectURL(file), img = new Image();
       img.onload = function () {
-        var k = Math.min(1, 1200 / Math.max(img.naturalWidth, img.naturalHeight));
+        var k = Math.min(1, 2400 / Math.max(img.naturalWidth, img.naturalHeight));   // 표시등이 작아서 크게 올림
         var w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
         var c = document.createElement('canvas'); c.width = w; c.height = h;
         c.getContext('2d').drawImage(img, 0, 0, w, h);
@@ -475,7 +483,7 @@
     S.slots = Array(N).fill('green'); S.ai = null; S.analysisId = null;
     un.forEach(function (i) { S.slots[i] = 'unused'; });
     S.unc = new Set(Array.from({ length: N }, function (_, i) { return i; }).filter(function (i) { return un.indexOf(i) < 0; }));
-    status(msg + (ME.requireAi ? ' 사진 분석 없이 제출하면 코인은 지급되지 않습니다.' : ' 36칸을 모두 확인해 주세요.'), true);
+    status(msg + (ME.requireAi ? ' 사진 분석 없이 제출하면 코인은 지급되지 않습니다.' : ' ' + N + '칸을 모두 확인해 주세요.'), true);
     reveal();
   }
 
@@ -670,6 +678,7 @@
   function loadTeacher() {
     run('teacherData').then(function (d) {
       DASH = d; $('#d-load').hidden = true;
+      applyLayout(d);
       MASK = {};
       d.carts.forEach(function (c) { MASK[c.name] = c.unused; });
       // 지금 보관함 설정을 기준으로 미사용 칸을 X로 바꿔서, 예전 기록도 같은 기준으로 계산합니다.
@@ -762,9 +771,9 @@
   }
 
   function renderHeat(recs, label) {
-    var n = recs.length, cnt = Array(36).fill(0), why = Array.from({ length: 36 }, function () { return {}; });
+    var n = recs.length, cnt = Array(N).fill(0), why = Array.from({ length: N }, function () { return {}; });
     recs.forEach(function (r) {
-      for (var i = 0; i < 36; i++) if (r.slots.charAt(i) === 'O') {
+      for (var i = 0; i < N; i++) if (r.slots.charAt(i) === 'O') {
         cnt[i]++; var w = r.reasons[i + 1];
         if (w) { var k = reasonKey(w); why[i][k] = (why[i][k] || 0) + 1; }
       }
@@ -831,7 +840,7 @@
 
   function renderRecs(recs) {
     var list = recs.slice().reverse().slice(0, 20);
-    $('#d-records').innerHTML = '<h2>제출 기록</h2><p class="muted">최근 20건 · 눌러서 펼치면 36칸 상태가 보입니다.</p>' + (list.length ? '<div class="recs">' + list.map(function (r) {
+    $('#d-records').innerHTML = '<h2>제출 기록</h2><p class="muted">최근 20건 · 눌러서 펼치면 칸 상태가 보입니다.</p>' + (list.length ? '<div class="recs">' + list.map(function (r) {
       return '<details><summary><b>' + esc(md(r.date) + ' ' + (r.period === 'morning' ? '아침' : '방과 후')) + '</b><span>' + esc(r.by) + '</span><span class="muted">빈 칸 ' + offCount(r.slots) + '개' + (r.coin ? ' · 코인 ' + r.coin : '') + '</span></summary>' +
         '<div class="body">' + miniGrid(r.slots, r.reasons) + reasonChips(r.reasons) +
         '<p class="muted">' + esc(r.when + ' · ' + r.mode + (r.edited ? ' · 학생이 ' + r.edited + '칸 수정' : '')) + '</p></div></details>';

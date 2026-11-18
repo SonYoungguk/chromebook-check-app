@@ -7,7 +7,9 @@
 
 var CONFIG = {
   CART_NAME: '1번 보관함',   // 보관함 시트가 비어 있을 때 쓰는 기본 이름
-  SLOTS: 36,
+  // 보관함 구조: 3단 선반, 한 단에 11칸, 모두 33칸 (칸 번호는 보관함 표시등 아래에 인쇄된 번호와 같음)
+  SLOTS: 33,
+  COLS: 11,
   // AI 스튜디오에서 지금 쓸 수 있는 모델 이름을 확인해 바꾸세요.
   // 스크립트 속성 GEMINI_MODEL 을 넣으면 그 값이 우선합니다.
   GEMINI_MODEL: 'gemini-2.5-flash',
@@ -24,7 +26,7 @@ var HEAD = {
   students: ['이메일', '이름', '당번(O)', '반(보관함 이름)', '번호'],
   carts: ['보관함(반)', '사용하는 칸 수', '사용하지 않는 칸 (선택, 쉼표로 구분)'],
   records: ['시각', '날짜', '시간대', '보관함', '제출자 이메일', '제출자 이름',
-            '36칸 상태 (R충전 중 G완료 O비어 있음 X미사용)', '비어 있는 칸과 사유', 'AI 판정', '학생이 고친 칸 수', '방식', '코인 지급'],
+            '칸 상태 (R충전 중 G완료 O비어 있음 X미사용)', '비어 있는 칸과 사유', 'AI 판정', '학생이 고친 칸 수', '방식', '코인 지급'],
   ledger: ['시각', '이메일', '이름', '코인', '구분', '메모'],
   teachers: ['이메일']
 };
@@ -175,7 +177,7 @@ function getInit() {
   var out = {
     email: r.email, student: !!r.student, teacher: r.teacher,
     name: r.student ? r.student.name : '', duty: !!(r.student && r.student.duty && cart),
-    cart: cart ? cart.name : '', unused: cart ? cart.unused : [], notice: notice,
+    cart: cart ? cart.name : '', unused: cart ? cart.unused : [], notice: notice, slots: CONFIG.SLOTS, cols: CONFIG.COLS,
     reasons: CONFIG.REASONS, requireAi: CONFIG.REQUIRE_AI_FOR_COIN,
     status: cart ? todayStatus_(cart.name) : { morning: null, afternoon: null }, coins: 0, history: []
   };
@@ -202,17 +204,21 @@ function analyze(b64) {
   if (!key) return { ok: false, manual: true, message: '사진 분석이 아직 설정되지 않았습니다.' };
   var model = props.getProperty('GEMINI_MODEL') || CONFIG.GEMINI_MODEL;
 
+  // 실제 보관함 사진 기준: 각 단 위쪽 띠에 작은 둥근 표시등이 한 줄로 있고, 표시등 아래에 칸 번호가 인쇄되어 있습니다.
+  var SL = CONFIG.SLOTS, CO = CONFIG.COLS, RO = Math.ceil(SL / CO), spans = [], ri;
+  for (ri = 0; ri < RO; ri++) spans.push((ri * CO + 1) + '~' + Math.min(SL, (ri + 1) * CO));
   var prompt = [
-    '이 사진은 학교 크롬북 충전 보관함을 찍은 것입니다. 보관함에는 12칸씩 3줄, 모두 36칸이 있습니다.',
-    '각 칸에는 충전 표시등이 있습니다. 판정 기준:',
-    '- red: 크롬북이 꽂혀 있고 표시등이 빨간색 (충전 중)',
-    '- green: 크롬북이 꽂혀 있고 표시등이 초록색 (충전 완료)',
-    '- off: 표시등이 꺼져 있거나 어두운 회색이고, 보통 칸 안에 크롬북이 보이지 않는 빈 칸',
-    '보관함에는 빈 칸이 있을 수도, 하나도 없을 수도 있습니다. 표시등이 꺼진 칸이나 크롬북이 없는 칸을 빠뜨리지 마세요.',
-    '칸 번호는 맨 윗줄 왼쪽에서 오른쪽으로 1~12, 가운데 줄 13~24, 아랫줄 25~36입니다. 사진에 번호가 보여도 위치를 기준으로 세어 주세요.',
-    '한 줄씩, 왼쪽 칸부터 차례로 하나도 건너뛰지 말고 판정하세요. 흐리거나 가려져서 확신이 없는 칸은 uncertain에 번호(1~36)로 적으세요.',
-    '다른 말 없이 JSON 객체 하나만 답하세요. 형식: {"rows": [[윗줄 12개], [가운데 줄 12개], [아랫줄 12개]], "uncertain": [7, 20], "note": "한 문장 메모"}',
-    '각 줄은 red, green, off 중 하나인 문자열 정확히 12개입니다.'
+    '이 사진은 학교 크롬북 충전 보관함을 찍은 것입니다. 보관함은 ' + RO + '단 선반이고 한 단에 ' + CO + '칸씩, 모두 ' + SL + '칸입니다.',
+    '각 단의 위쪽 띠에는 칸마다 작은 둥근 LED 표시등이 한 줄로 있고, 표시등 바로 아래에 칸 번호가 인쇄되어 있습니다. 맨 위 단부터 ' + spans.join(', ') + '번입니다.',
+    '판정은 표시등을 기준으로 합니다.',
+    '- green: 표시등이 초록색으로 켜져 있음 (충전 완료)',
+    '- red: 표시등이 빨간색이나 주황색으로 켜져 있음 (충전 중)',
+    '- off: 표시등이 꺼져 있어 어두운 검은색 구멍으로 보임. 이런 칸에는 보통 크롬북이 없고 케이블만 늘어져 있습니다.',
+    '표시등은 작고 안쪽으로 들어가 있어서, 켜진 표시등은 구멍 아래쪽에 밝은 초록 점으로 보일 수 있습니다. 빛이 반사되어 하얗게 보여 켜졌는지 꺼졌는지 알 수 없으면 그 칸은 uncertain에 적으세요.',
+    '표시등과 그 아래 번호를 정확히 짝지어 한 단씩, 왼쪽 칸부터 차례로 하나도 건너뛰지 말고 판정하세요. 크롬북 본체는 선반 아래에 있고 표시등과 위치가 어긋나 보일 수 있으니, 크롬북 위치가 아니라 표시등과 번호로 칸을 구분하세요.',
+    '확신이 없는 칸은 uncertain에 번호(1~' + SL + ')로 적으세요.',
+    '다른 말 없이 JSON 객체 하나만 답하세요. 형식: {"rows": [' + spans.map(function () { return '[' + CO + '개]'; }).join(', ') + '], "uncertain": [7, 20], "note": "한 문장 메모"}',
+    '각 줄은 green, red, off 중 하나인 문자열 정확히 ' + CO + '개입니다.'
   ].join('\n');
 
   var body = {
@@ -279,7 +285,7 @@ function analyze(b64) {
   if (!slots && parsed && Array.isArray(parsed.rows)) slots = [].concat.apply([], parsed.rows);
   var valid = Array.isArray(slots) && slots.length === CONFIG.SLOTS &&
     slots.every(function (v) { return v === 'red' || v === 'green' || v === 'off'; });
-  if (!valid) return { ok: false, manual: true, message: 'AI가 36칸을 모두 읽지 못했습니다. (읽은 칸 ' + (Array.isArray(slots) ? slots.length : 0) + '개)' };
+  if (!valid) return { ok: false, manual: true, message: 'AI가 ' + CONFIG.SLOTS + '칸을 모두 읽지 못했습니다. (읽은 칸 ' + (Array.isArray(slots) ? slots.length : 0) + '개)' };
 
   // 사용하지 않는 칸은 AI가 어떻게 읽었든 '미사용'으로 덮어씁니다.
   slots = slots.slice();
@@ -388,7 +394,7 @@ function teacherData() {
   });
   var todayByCart = {};
   carts.forEach(function (c) { todayByCart[c.name] = todayStatus_(c.name); });
-  return { today: today_(), carts: carts, todayByCart: todayByCart, recent: recs, students: students };
+  return { today: today_(), slots: CONFIG.SLOTS, cols: CONFIG.COLS, carts: carts, todayByCart: todayByCart, recent: recs, students: students };
 }
 
 function redeem(email, amount, memo) {

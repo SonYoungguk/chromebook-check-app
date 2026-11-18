@@ -21,14 +21,14 @@ MOCK = r"""<script>
   function range(a, b) { var r = []; for (var i = a; i < b; i++) r.push(i); return r; }
   // 반마다 보관함이 있고, 반 인원보다 많은 칸은 사용하지 않는 칸입니다. (실제 앱에서는 '보관함' 시트에 적습니다)
   var CARTS = [
-    { name: '3학년 1반', size: 28, used: 28, unused: range(28, 36) },
-    { name: '3학년 2반', size: 30, used: 29, unused: [14].concat(range(30, 36)) }
+    { name: '3학년 1반', size: 28, used: 28, unused: range(28, 33) },
+    { name: '3학년 2반', size: 30, used: 29, unused: [14].concat(range(30, 33)) }
   ];
   var MY = CARTS[0];
-  // 예시 분석 결과: 시험용 사진(cart-sample-01)의 정답과 같음. 빈 칸 5, 8, 9, 17, 32번 (32번은 1반의 미사용 칸이라 무시됨)
-  var SAMPLE = ['red','green','green','green','off','green','red','off','off','green','red','red',
-                'red','green','red','red','off','green','green','green','red','green','red','red',
-                'red','red','red','red','red','red','green','off','red','red','red','red'];
+  // 예시 분석 결과: 실제 보관함 사진(real-cart-01)을 사람이 읽은 값과 같음. 빈 칸 7, 17, 22, 26, 28~33번 (29번 이후는 1반의 미사용 칸이라 무시됨)
+  var SAMPLE = ['green', 'green', 'green', 'green', 'green', 'green', 'off', 'green', 'green', 'green', 'green',
+                'green', 'green', 'green', 'green', 'green', 'off', 'green', 'green', 'green', 'green', 'off',
+                'green', 'green', 'green', 'off', 'green', 'off', 'off', 'off', 'off', 'off', 'off'];
   function p2(n) { return String(n).padStart(2, '0'); }
   function ymd(d) { return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); }
   var today = new Date(), recent = [];
@@ -41,7 +41,7 @@ MOCK = r"""<script>
       ['morning', 'afternoon'].forEach(function (per) {
         if (ci === 1 && k === 3 && per === 'morning') return;
         var slots = '', reasons = {};
-        for (var i = 0; i < 36; i++) {
+        for (var i = 0; i < 33; i++) {
           if (cart.unused.indexOf(i) >= 0) { slots += 'X'; continue; }
           var off = (i === 6 && k % 2 === 0) || (i === 19 && k % 3 === 0) || i === 26 || (i === 7 && k < 5 && ci === 0);
           slots += off ? 'O' : (i % 2 ? 'G' : 'R');
@@ -75,13 +75,13 @@ MOCK = r"""<script>
   }
   var impl = {
     getInit: function () {
-      return { email: 'me@demo', name: me.name, student: true, teacher: true, duty: true, cart: MY.name, unused: MY.unused, notice: '', reasons: REASONS,
+      return { email: 'me@demo', name: me.name, student: true, teacher: true, duty: true, cart: MY.name, unused: MY.unused, notice: '', reasons: REASONS, slots: 33, cols: 11,
         requireAi: true, status: todayBy(MY.name), coins: me.total, history: history.slice().reverse() };
     },
     analyze: function () {
       var slots = SAMPLE.slice();
       MY.unused.forEach(function (i) { slots[i] = 'unused'; });
-      return { ok: true, analysisId: 'demo', slots: slots, uncertain: [8], note: '시연용 예시 결과입니다 (올린 사진과 관계없음)' };
+      return { ok: true, analysisId: 'demo', slots: slots, uncertain: [0], note: '시연용 예시 결과입니다 (올린 사진과 관계없음)' };
     },
     submit: function (p) {
       var reasons = p.reasons || {}, empties = {};
@@ -96,7 +96,7 @@ MOCK = r"""<script>
     },
     teacherData: function () {
       var by = {}; CARTS.forEach(function (c) { by[c.name] = todayBy(c.name); });
-      return { today: ymd(today), carts: CARTS, todayByCart: by, recent: JSON.parse(JSON.stringify(recent.slice(-600))),
+      return { today: ymd(today), slots: 33, cols: 11, carts: CARTS, todayByCart: by, recent: JSON.parse(JSON.stringify(recent.slice(-600))),
         students: students.map(function (s) { return { email: s.email, name: s.name, duty: s.duty, total: s.total, cart: s.cart, no: s.no }; }) };
     },
     redeem: function (email, amount) {
@@ -121,7 +121,7 @@ MOCK = r"""<script>
 
 out = src.replace("<body>\n<main>", "<body>\n" + BANNER + "\n<main>", 1)
 assert BANNER in out, "body/main 위치를 찾지 못했습니다"
-marker = "<script>\n(function () {\n  var N = 36"
+marker = "<script>\n(function () {\n  var N = 33"
 assert marker in out, "본 스크립트 위치를 찾지 못했습니다"
 out = out.replace(marker, MOCK + marker, 1)
 out = out.replace("<title>충전함 점검</title>", "<title>충전함 점검 (시연)</title>\n<meta name=\"robots\" content=\"noindex, nofollow\">", 1)

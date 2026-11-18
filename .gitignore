@@ -2,3 +2,6 @@ node_modules/
 .clasp.json
 .deployment-id
 .clasprc.json
+
+# 선생님이 분석용으로 보여 준 실제 보관함 사진은 GitHub에 올리지 않음
+test-photos/real-cart-*
