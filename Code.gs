@@ -239,7 +239,10 @@ function analyze(b64) {
   if (fb && fb !== model) models.push(fb);
   var t0 = Date.now();
   var budget = { left: CONFIG.MAX_CALLS_PER_PHOTO, until: Date.now() + CONFIG.MAX_SECONDS_PER_PHOTO * 1000 };
-  var call = callGemini_(models, key, body, budget);
+  // 최근 30분 안에 응답이 없거나 너무 느렸던 모델은 건너뜁니다. (그 모델을 기다리느라 매번 1분씩 걸리는 일을 막기 위해)
+  var ready = models.filter(function (m) { return !isSlow_(m); });
+  if (ready.length < models.length) console.log('최근 응답이 느렸던 모델은 건너뜁니다: ' + models.filter(isSlow_).join(', '));
+  var call = ready.length ? callGemini_(ready, key, body, budget) : { resp: null, code: 0, model: model };
   var stop = function (c) {
     if (c.limited === 'day') return { ok: false, manual: true, message: '오늘 사진 분석 횟수를 모두 썼습니다. 내일 다시 쓸 수 있습니다. (직접 표시로 제출할 수 있습니다)' };
     if (c.limited === 'time') return { ok: false, manual: true, message: 'AI 분석이 너무 오래 걸려 중단했습니다. 잠시 뒤 다시 올리거나 직접 표시해 주세요.' };
@@ -250,6 +253,9 @@ function analyze(b64) {
     var more = autoModels_(key, models);
     if (more.length) {
       console.log('쓰던 모델이 계속 실패해 자동으로 다른 모델을 시도합니다: ' + more.join(', '));
+      // 쓰던 모델을 기다리느라 시간을 다 썼어도, 대체 모델은 최소한 한두 번은 시도할 수 있게 합니다.
+      budget.until = Math.max(budget.until, Date.now() + 40000);
+      budget.left = Math.max(budget.left, 2);
       call = callGemini_(more, key, body, budget);
     }
   }
@@ -467,6 +473,7 @@ function callGemini_(models, key, body, budget) {
       }
       // 실행 기록(Apps Script 왼쪽 '실행')에서 원인을 볼 수 있습니다. 404는 모델 이름, 400/403은 키나 권한 문제인 경우가 많습니다.
       console.error('Gemini HTTP ' + code + ' (모델 ' + model + ', 시도 ' + (attempt + 1) + '): ' + (resp ? resp.getContentText().slice(0, 300) : '연결 실패'));
+      if (code === 0 || Date.now() - t1 > 25000) markSlow_(model);   // 응답이 없거나 25초 넘게 걸린 모델은 한동안 건너뜀
       var transient = code === 0 || code === 429 || code >= 500;
       if (!transient) break;
       if (Date.now() - t1 > 25000) break;          // 응답이 느린 모델은 같은 모델로 다시 시도하지 않고 다음 모델로 넘어갑니다.
@@ -475,6 +482,10 @@ function callGemini_(models, key, body, budget) {
   }
   return { resp: resp, code: code, model: model };
 }
+
+// 응답이 없거나 너무 느렸던 모델은 30분 동안 건너뛰도록 기억합니다.
+function isSlow_(model) { try { return !!CacheService.getScriptCache().get('gm:slow:' + model); } catch (e) { return false; } }
+function markSlow_(model) { try { CacheService.getScriptCache().put('gm:slow:' + model, '1', 1800); } catch (e) { /* 기억하지 못해도 분석은 계속합니다 */ } }
 
 // 오늘 보낸 Gemini 요청 수를 세어, 상한(MAX_GEMINI_CALLS_PER_DAY)을 넘으면 false 를 돌려줍니다.
 function bumpDaily_() {
@@ -510,7 +521,7 @@ function autoModels_(key, tried) {
     } catch (e) { return []; }
   }
   var ok = names.filter(function (n) {
-    return /flash/.test(n) && !/image|tts|live|audio|embed|exp|thinking|native|robotics|computer/.test(n) && tried.indexOf(n) < 0;
+    return /flash/.test(n) && !/image|tts|live|audio|embed|exp|thinking|native|robotics|computer/.test(n) && tried.indexOf(n) < 0 && !isSlow_(n);
   });
   var rank = function (n) { return (/preview/.test(n) ? 2 : 0) + (/lite/.test(n) ? 1 : 0); };
   ok.sort(function (x, y) { return rank(x) - rank(y) || (x < y ? 1 : x > y ? -1 : 0); });
@@ -542,9 +553,35 @@ function checkGemini() {
   Logger.log(names.indexOf(model) >= 0 ? '→ 현재 모델 ' + model + ' 은(는) 목록에 있습니다.'
     : '→ 현재 모델 ' + model + ' 은(는) 목록에 없습니다. 위 목록의 flash 계열 이름을 스크립트 속성 GEMINI_MODEL 에 넣어 보세요.');
 
-  var t = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
-    method: 'post', contentType: 'application/json', muteHttpExceptions: true, headers: { 'x-goog-api-key': key },
-    payload: JSON.stringify({ contents: [{ parts: [{ text: '숫자 7만 답하세요.' }] }] })
+  try {
+    var t = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true, headers: { 'x-goog-api-key': key },
+      payload: JSON.stringify({ contents: [{ parts: [{ text: '숫자 7만 답하세요.' }] }] })
+    });
+    Logger.log('② 현재 모델로 짧은 질문: HTTP ' + t.getResponseCode() + ' / ' + t.getContentText().slice(0, 300));
+  } catch (e) {
+    Logger.log('② 현재 모델이 응답하지 않습니다 (연결 시간 초과). 아래 ③에서 다른 모델과 속도를 비교하세요. ' + e);
+  }
+
+  // ③ 속도 시험: 아주 작은 사진 한 장을 보내고 모델마다 응답 시간을 잽니다. (현재 모델 + 자동 후보 최대 2개)
+  // 응답이 없는 모델은 연결 시간 초과까지 1분쯤 걸릴 수 있어서 이 시험은 몇 분 걸릴 수 있습니다.
+  var png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  var cands = [model].concat(autoModels_(key, [model])).slice(0, 3);
+  Logger.log('③ 속도 시험 대상: ' + cands.join(', '));
+  cands.forEach(function (m) {
+    var t0 = Date.now();
+    try {
+      var rr = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(m) + ':generateContent', {
+        method: 'post', contentType: 'application/json', muteHttpExceptions: true, headers: { 'x-goog-api-key': key },
+        payload: JSON.stringify({
+          contents: [{ parts: [{ text: '이 사진의 색을 한 단어로만 답하세요.' }, { inlineData: { mimeType: 'image/png', data: png } }] }],
+          generationConfig: { temperature: 0, thinkingConfig: { thinkingBudget: 0 } }
+        })
+      });
+      Logger.log('③ ' + m + ': HTTP ' + rr.getResponseCode() + ', ' + (Date.now() - t0) + 'ms' + (rr.getResponseCode() === 200 ? '' : ' / ' + rr.getContentText().slice(0, 160)));
+    } catch (e) {
+      Logger.log('③ ' + m + ': 응답 없음 (' + (Date.now() - t0) + 'ms 뒤 ' + e + ')');
+    }
   });
-  Logger.log('② 현재 모델로 짧은 질문: HTTP ' + t.getResponseCode() + ' / ' + t.getContentText().slice(0, 300));
+  Logger.log('→ 위에서 HTTP 200이고 ms가 가장 작은 모델 이름을 스크립트 속성 GEMINI_MODEL 에 넣으세요. (별칭 gemini-flash-latest 보다 구체적인 이름이 안전합니다)');
 }
