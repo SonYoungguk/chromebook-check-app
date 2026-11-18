@@ -17,7 +17,8 @@ var CONFIG = {
   MAX_UNCERTAIN: 12,           // AI가 확신 못 한 칸이 이보다 많으면 다시 찍게 함
   // Gemini 요청 횟수 상한. 무료 사용량을 넘거나 비용이 생기는 일을 막기 위한 안전장치입니다. (실패한 요청도 셉니다)
   MAX_GEMINI_CALLS_PER_DAY: 150,   // 앱 전체에서 하루에 Gemini에 보낼 수 있는 요청 수
-  MAX_CALLS_PER_PHOTO: 8,          // 사진 한 장을 분석하려고 다시 시도하거나 다른 모델을 써 볼 수 있는 최대 횟수
+  MAX_CALLS_PER_PHOTO: 6,          // 사진 한 장을 분석하려고 다시 시도하거나 다른 모델을 써 볼 수 있는 최대 횟수
+  MAX_SECONDS_PER_PHOTO: 60,       // 사진 한 장의 분석에 쓸 최대 시간(초). 넘으면 더 시도하지 않고 직접 표시로 넘김
   MAX_ANALYZE_PER_HOUR: 20,    // 한 사람이 한 시간에 사진 분석에 성공할 수 있는 횟수 (실패한 요청은 세지 않음, 교사는 제한 없음)
   // [코인 수, 가중치] — 1~5개, 많이 나올수록 확률이 낮습니다. (35·30·20·10·5 = 100%)
   COIN_TABLE: [[1, 35], [2, 30], [3, 20], [4, 10], [5, 5]],
@@ -237,11 +238,14 @@ function analyze(b64) {
   var fb = props.getProperty('GEMINI_MODEL_FALLBACK');
   if (fb && fb !== model) models.push(fb);
   var t0 = Date.now();
-  var budget = { left: CONFIG.MAX_CALLS_PER_PHOTO };
+  var budget = { left: CONFIG.MAX_CALLS_PER_PHOTO, until: Date.now() + CONFIG.MAX_SECONDS_PER_PHOTO * 1000 };
   var call = callGemini_(models, key, body, budget);
-  if (call.limited === 'day') {
-    return { ok: false, manual: true, message: '오늘 사진 분석 횟수를 모두 썼습니다. 내일 다시 쓸 수 있습니다. (직접 표시로 제출할 수 있습니다)' };
-  }
+  var stop = function (c) {
+    if (c.limited === 'day') return { ok: false, manual: true, message: '오늘 사진 분석 횟수를 모두 썼습니다. 내일 다시 쓸 수 있습니다. (직접 표시로 제출할 수 있습니다)' };
+    if (c.limited === 'time') return { ok: false, manual: true, message: 'AI 분석이 너무 오래 걸려 중단했습니다. 잠시 뒤 다시 올리거나 직접 표시해 주세요.' };
+    return null;
+  };
+  if (stop(call)) return stop(call);
   if (call.code !== 200 && !call.limited && (call.code === 0 || call.code === 404 || call.code === 429 || call.code >= 500)) {
     var more = autoModels_(key, models);
     if (more.length) {
@@ -249,9 +253,7 @@ function analyze(b64) {
       call = callGemini_(more, key, body, budget);
     }
   }
-  if (call.limited === 'day') {
-    return { ok: false, manual: true, message: '오늘 사진 분석 횟수를 모두 썼습니다. 내일 다시 쓸 수 있습니다. (직접 표시로 제출할 수 있습니다)' };
-  }
+  if (stop(call)) return stop(call);
   var resp = call.resp, code = call.code;
   model = call.model;
   if (code !== 200) {
@@ -439,8 +441,10 @@ function callGemini_(models, key, body, budget) {
     model = models[mi];
     for (var attempt = 0; attempt < 3; attempt++) {
       if (budget && budget.left <= 0) return { resp: resp, code: code, model: model, limited: 'photo' };   // 사진 한 장당 최대 요청 수
+      if (budget && budget.until && Date.now() > budget.until) return { resp: resp, code: code, model: model, limited: 'time' };   // 사진 한 장당 최대 시간
       if (!bumpDaily_()) return { resp: resp, code: code, model: model, limited: 'day' };                  // 하루 상한
       if (budget) budget.left--;
+      var t1 = Date.now();
       try {
         resp = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
           method: 'post', contentType: 'application/json', muteHttpExceptions: true,
@@ -451,10 +455,13 @@ function callGemini_(models, key, body, budget) {
         console.error('Gemini fetch failed (모델 ' + model + '): ' + e);
         resp = null; code = 0;
       }
-      if (code === 200) return { resp: resp, code: 200, model: model };
+      if (code === 200) { console.log('Gemini 한 번 요청에 ' + (Date.now() - t1) + 'ms (모델 ' + model + ')'); return { resp: resp, code: 200, model: model }; }
       if (code === 400 && body.generationConfig.thinkingConfig) {
-        console.error('모델 ' + model + ' 이(가) thinking 설정을 거부해 빼고 다시 시도합니다: ' + (resp ? resp.getContentText().slice(0, 200) : ''));
-        delete body.generationConfig.thinkingConfig;
+        // thinking 설정을 거부하는 모델: 예산(0) -> 수준(low) -> 설정 없음 순서로 바꿔 다시 시도합니다.
+        // (thinking을 아예 빼면 답이 오래 걸릴 수 있어 마지막 수단입니다)
+        console.error('모델 ' + model + ' 이(가) thinking 설정을 거부했습니다: ' + (resp ? resp.getContentText().slice(0, 200) : ''));
+        if (body.generationConfig.thinkingConfig.thinkingBudget === 0) body.generationConfig.thinkingConfig = { thinkingLevel: 'low' };
+        else delete body.generationConfig.thinkingConfig;
         attempt--;
         continue;
       }
@@ -462,6 +469,7 @@ function callGemini_(models, key, body, budget) {
       console.error('Gemini HTTP ' + code + ' (모델 ' + model + ', 시도 ' + (attempt + 1) + '): ' + (resp ? resp.getContentText().slice(0, 300) : '연결 실패'));
       var transient = code === 0 || code === 429 || code >= 500;
       if (!transient) break;
+      if (Date.now() - t1 > 25000) break;          // 응답이 느린 모델은 같은 모델로 다시 시도하지 않고 다음 모델로 넘어갑니다.
       if (attempt < 2) Utilities.sleep(1500 * (attempt + 1));
     }
   }

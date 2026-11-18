@@ -186,6 +186,7 @@
         </div>
         <img id="preview" alt="올린 보관함 사진" hidden>
         <p class="status" id="status" role="status"></p>
+        <div class="row"><button class="btn" id="btn-skip" type="button" hidden>기다리지 않고 직접 표시하기</button></div>
       </div>
 
       <div class="card" id="s2" hidden>
@@ -368,7 +369,7 @@
   }
 
   function resetFlow() {
-    S = { slots: [], ai: null, unc: new Set(), sel: null, reasons: {}, other: {}, analysisId: null, busy: false, done: false };
+    S = { slots: [], ai: null, unc: new Set(), sel: null, reasons: {}, other: {}, analysisId: null, busy: false, done: false, skipped: false };
     ['#s2', '#s3', '#s4', '#preview', '#done'].forEach(function (s) { $(s).hidden = true; });
     $('#s1').hidden = false; $('#photo').value = ''; status('');
   }
@@ -382,6 +383,11 @@
     reveal();
   }
 
+  $('#btn-skip').onclick = function () {
+    S.skipped = true; $('#btn-skip').hidden = true;
+    startManual('AI 분석을 기다리지 않고 직접 표시합니다.');
+  };
+
   $('#photo').addEventListener('change', function (e) {
     var f = e.target.files && e.target.files[0]; if (!f || S.busy) return;
     handlePhoto(f);
@@ -391,12 +397,18 @@
     ['#s2', '#s3', '#s4'].forEach(function (s) { $(s).hidden = true; });
     S.busy = true; $('#photo-label').style.opacity = .5;
     var t0 = Date.now();
+    S.skipped = false; $('#btn-skip').hidden = true;
     status('사진을 읽고 있습니다.');
-    var tick = setInterval(function () { status('AI가 사진을 보고 있습니다… ' + Math.round((Date.now() - t0) / 1000) + '초'); }, 1000);
+    var tick = setInterval(function () {
+      var sec = Math.round((Date.now() - t0) / 1000);
+      if (!S.skipped) status('AI가 사진을 보고 있습니다… ' + sec + '초' + (sec >= 30 ? ' (오래 걸리면 아래 버튼으로 직접 표시할 수 있습니다)' : ''));
+      if (sec >= 30 && !S.skipped) $('#btn-skip').hidden = false;
+    }, 1000);
     readPhoto(file).then(function (p) {
       var pv = $('#preview'); pv.src = p.url; pv.hidden = false;
       return run('analyze', p.b64);
     }).then(function (r) {
+      if (S.skipped) return;                       // 기다리지 않고 직접 표시로 넘어간 뒤에 온 결과는 무시
       if (r.ok) {
         S.slots = r.slots.slice(); S.ai = r.slots.slice(); S.analysisId = r.analysisId;
         S.unc = new Set(r.uncertain);
@@ -408,8 +420,8 @@
         startManual(r.message || 'AI 분석을 쓸 수 없습니다.');
       }
     }).catch(function (e) {
-      status(errText(e), true);
-    }).then(function () { clearInterval(tick); S.busy = false; $('#photo-label').style.opacity = 1; });
+      if (!S.skipped) status(errText(e), true);
+    }).then(function () { clearInterval(tick); $('#btn-skip').hidden = true; S.busy = false; $('#photo-label').style.opacity = 1; });
   }
 
   /* ----- 결과 확인 ----- */
