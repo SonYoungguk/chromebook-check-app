@@ -263,10 +263,12 @@ function analyze(b64) {
   var resp = call.resp, code = call.code;
   model = call.model;
   if (code !== 200) {
-    var busy = code === 0 || code === 429 || code >= 500;
-    return { ok: false, manual: true, message: busy
-      ? 'AI 서버가 지금 바쁩니다. 잠시 뒤 다시 올려 주세요. (오류 ' + (code || '연결 실패') + ')'
-      : 'AI 분석에 실패했습니다. (오류 ' + code + ')' };
+    var busy = code === 0 || code >= 500;
+    return { ok: false, manual: true, message: code === 429
+      ? 'AI 무료 사용량 한도에 도달했습니다. 잠시 뒤 다시 올려 주세요. (오류 429)'
+      : busy
+        ? 'AI 서버가 지금 바쁩니다. 잠시 뒤 다시 올려 주세요. (오류 ' + (code || '연결 실패') + ')'
+        : 'AI 분석에 실패했습니다. (오류 ' + code + ')' };
   }
 
   cache.put(rlKey, String(used + 1), 3600);
@@ -474,18 +476,20 @@ function callGemini_(models, key, body, budget) {
       // 실행 기록(Apps Script 왼쪽 '실행')에서 원인을 볼 수 있습니다. 404는 모델 이름, 400/403은 키나 권한 문제인 경우가 많습니다.
       console.error('Gemini HTTP ' + code + ' (모델 ' + model + ', 시도 ' + (attempt + 1) + '): ' + (resp ? resp.getContentText().slice(0, 300) : '연결 실패'));
       if (code === 0 || Date.now() - t1 > 25000) markSlow_(model);   // 응답이 없거나 25초 넘게 걸린 모델은 한동안 건너뜀
-      var transient = code === 0 || code === 429 || code >= 500;
+      if (code === 429) markSlow_(model, 600);                       // 사용량 초과: 같은 모델로 다시 해도 소용없으니 10분 동안 건너뜀
+      var transient = code === 0 || code >= 500;                     // 429는 재시도하지 않음
       if (!transient) break;
       if (Date.now() - t1 > 25000) break;          // 응답이 느린 모델은 같은 모델로 다시 시도하지 않고 다음 모델로 넘어갑니다.
       if (attempt < 2) Utilities.sleep(1500 * (attempt + 1));
     }
+    if (code >= 500) markSlow_(model, 120);   // 서버가 바쁜 모델은 2분 동안 건너뛰어 다음 사진이 헛되이 기다리지 않게 함
   }
   return { resp: resp, code: code, model: model };
 }
 
 // 응답이 없거나 너무 느렸던 모델은 30분 동안 건너뛰도록 기억합니다.
 function isSlow_(model) { try { return !!CacheService.getScriptCache().get('gm:slow:' + model); } catch (e) { return false; } }
-function markSlow_(model) { try { CacheService.getScriptCache().put('gm:slow:' + model, '1', 1800); } catch (e) { /* 기억하지 못해도 분석은 계속합니다 */ } }
+function markSlow_(model, seconds) { try { CacheService.getScriptCache().put('gm:slow:' + model, '1', seconds || 1800); } catch (e) { /* 기억하지 못해도 분석은 계속합니다 */ } }
 
 // 오늘 보낸 Gemini 요청 수를 세어, 상한(MAX_GEMINI_CALLS_PER_DAY)을 넘으면 false 를 돌려줍니다.
 function bumpDaily_() {
@@ -520,10 +524,12 @@ function autoModels_(key, tried) {
       cache.put('gm:list', JSON.stringify(names), 21600);
     } catch (e) { return []; }
   }
+  // 사진을 읽는 일반 모델만 고릅니다: gemini-2.5-flash, gemini-3-flash 처럼 '숫자 + flash'(또는 flash-lite) 이름.
+  // omni, 별칭(latest), preview, 이미지·음성·임베딩 전용 같은 낯선 모델은 무료 한도가 막혀 있거나 용도가 달라 제외합니다.
   var ok = names.filter(function (n) {
-    return /flash/.test(n) && !/image|tts|live|audio|embed|exp|thinking|native|robotics|computer/.test(n) && tried.indexOf(n) < 0 && !isSlow_(n);
+    return /^gemini-\d+(\.\d+)?-flash(-lite)?$/.test(n) && tried.indexOf(n) < 0 && !isSlow_(n);
   });
-  var rank = function (n) { return (/preview/.test(n) ? 2 : 0) + (/lite/.test(n) ? 1 : 0); };
+  var rank = function (n) { return /lite/.test(n) ? 1 : 0; };
   ok.sort(function (x, y) { return rank(x) - rank(y) || (x < y ? 1 : x > y ? -1 : 0); });
   return ok.slice(0, 2);
 }
