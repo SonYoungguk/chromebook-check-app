@@ -237,6 +237,10 @@ function analyze(b64) {
   var models = [model];
   var fb = props.getProperty('GEMINI_MODEL_FALLBACK');
   if (fb && fb !== model) models.push(fb);
+  // 최근 6시간 안에 성공했던 모델이 있으면 그 모델을 먼저 씁니다. (설정한 모델이 계속 바쁠 때 매번 기다리지 않도록)
+  var good = null;
+  try { good = cache.get('gm:good'); } catch (e) { good = null; }
+  if (good) models = [good].concat(models.filter(function (m) { return m !== good; }));
   var t0 = Date.now();
   var budget = { left: CONFIG.MAX_CALLS_PER_PHOTO, until: Date.now() + CONFIG.MAX_SECONDS_PER_PHOTO * 1000 };
   // 최근 30분 안에 응답이 없거나 너무 느렸던 모델은 건너뜁니다. (그 모델을 기다리느라 매번 1분씩 걸리는 일을 막기 위해)
@@ -262,6 +266,7 @@ function analyze(b64) {
   if (stop(call)) return stop(call);
   var resp = call.resp, code = call.code;
   model = call.model;
+  if (code === 200) { try { cache.put('gm:good', model, 21600); } catch (e) { /* 기억하지 못해도 괜찮습니다 */ } }
   if (code !== 200) {
     var busy = code === 0 || code >= 500;
     return { ok: false, manual: true, message: code === 429
@@ -529,8 +534,10 @@ function autoModels_(key, tried) {
   var ok = names.filter(function (n) {
     return /^gemini-\d+(\.\d+)?-flash(-lite)?$/.test(n) && tried.indexOf(n) < 0 && !isSlow_(n);
   });
-  var rank = function (n) { return /lite/.test(n) ? 1 : 0; };
-  ok.sort(function (x, y) { return rank(x) - rank(y) || (x < y ? 1 : x > y ? -1 : 0); });
+  // 정렬: flash-lite 는 뒤로, 그 안에서는 버전이 낮은(오래되어 덜 붐비는) 모델부터. 새 모델은 한꺼번에 몰려 503이 잦습니다.
+  var ver = function (n) { return parseFloat((n.match(/^gemini-(\d+(?:\.\d+)?)-/) || [0, 0])[1]); };
+  var rank = function (n) { return (/lite/.test(n) ? 100 : 0) + ver(n); };
+  ok.sort(function (x, y) { return rank(x) - rank(y); });
   return ok.slice(0, 2);
 }
 
@@ -569,12 +576,17 @@ function checkGemini() {
     Logger.log('② 현재 모델이 응답하지 않습니다 (연결 시간 초과). 아래 ③에서 다른 모델과 속도를 비교하세요. ' + e);
   }
 
-  // ③ 속도 시험: 아주 작은 사진 한 장을 보내고 모델마다 응답 시간을 잽니다. (현재 모델 + 자동 후보 최대 2개)
-  // 응답이 없는 모델은 연결 시간 초과까지 1분쯤 걸릴 수 있어서 이 시험은 몇 분 걸릴 수 있습니다.
+  // ③ 속도 시험: 아주 작은 사진 한 장을 보내고 모델마다 응답 시간을 잽니다.
+  // 새 모델은 붐비는 경우가 많아서, 오래된 안정 모델부터 폭넓게(최대 8개) 시험합니다. 몇 분 걸릴 수 있습니다.
   var png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-  var cands = [model].concat(autoModels_(key, [model])).slice(0, 3);
-  Logger.log('③ 속도 시험 대상: ' + cands.join(', '));
+  var strict = names.filter(function (n) { return /^gemini-\d+(\.\d+)?-flash(-lite)?$/.test(n); });
+  var ver = function (n) { return parseFloat((n.match(/^gemini-(\d+(?:\.\d+)?)-/) || [0, 0])[1]); };
+  strict.sort(function (x, y) { return ((/lite/.test(x) ? 100 : 0) + ver(x)) - ((/lite/.test(y) ? 100 : 0) + ver(y)); });
+  var cands = [model].concat(strict.filter(function (n) { return n !== model; })).slice(0, 8);
+  Logger.log('③ 속도 시험 대상 (' + cands.length + '개): ' + cands.join(', '));
+  var results = [], startAll = Date.now();
   cands.forEach(function (m) {
+    if (Date.now() - startAll > 240000) { Logger.log('③ ' + m + ': 시간이 부족해 시험하지 않음'); return; }
     var t0 = Date.now();
     try {
       var rr = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(m) + ':generateContent', {
@@ -584,10 +596,18 @@ function checkGemini() {
           generationConfig: { temperature: 0, thinkingConfig: { thinkingBudget: 0 } }
         })
       });
-      Logger.log('③ ' + m + ': HTTP ' + rr.getResponseCode() + ', ' + (Date.now() - t0) + 'ms' + (rr.getResponseCode() === 200 ? '' : ' / ' + rr.getContentText().slice(0, 160)));
+      var c = rr.getResponseCode(), ms = Date.now() - t0;
+      Logger.log('③ ' + m + ': HTTP ' + c + ', ' + ms + 'ms' + (c === 200 ? '' : ' / ' + String(rr.getContentText()).replace(/\s+/g, ' ').slice(0, 110)));
+      if (c === 200) results.push({ m: m, ms: ms });
     } catch (e) {
       Logger.log('③ ' + m + ': 응답 없음 (' + (Date.now() - t0) + 'ms 뒤 ' + e + ')');
     }
   });
-  Logger.log('→ 위에서 HTTP 200이고 ms가 가장 작은 모델 이름을 스크립트 속성 GEMINI_MODEL 에 넣으세요. (별칭 gemini-flash-latest 보다 구체적인 이름이 안전합니다)');
+  results.sort(function (x, y) { return x.ms - y.ms; });
+  if (results.length) {
+    Logger.log('→ 쓸 수 있는 모델(빠른 순서): ' + results.map(function (r) { return r.m + ' ' + r.ms + 'ms'; }).join(', '));
+    Logger.log('→ 스크립트 속성 GEMINI_MODEL 에 ' + results[0].m + (results[1] ? ', GEMINI_MODEL_FALLBACK 에 ' + results[1].m : '') + ' 를 넣어 보세요.');
+  } else {
+    Logger.log('→ 시험한 모델이 모두 실패했습니다. 구글 서버가 붐비는 시간일 수 있으니 10~20분 뒤에 다시 실행해 보세요.');
+  }
 }
