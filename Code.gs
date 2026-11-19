@@ -12,7 +12,7 @@ var CONFIG = {
   COLS: 11,
   // AI 스튜디오에서 지금 쓸 수 있는 모델 이름을 확인해 바꾸세요.
   // 스크립트 속성 GEMINI_MODEL 을 넣으면 그 값이 우선합니다.
-  GEMINI_MODEL: 'gemini-2.5-flash',
+  GEMINI_MODEL: 'gemini-3.5-flash',   // 2.5 계열은 새 사용자에게 닫혀 404가 납니다. 다른 모델이 필요하면 checkGemini 로 확인하세요.
   REQUIRE_AI_FOR_COIN: true,   // true: 사진 분석이 성공한 제출만 코인 지급
   MAX_UNCERTAIN: 12,           // AI가 확신 못 한 칸이 이보다 많으면 다시 찍게 함
   // Gemini 요청 횟수 상한. 무료 사용량을 넘거나 비용이 생기는 일을 막기 위한 안전장치입니다. (실패한 요청도 셉니다)
@@ -482,6 +482,16 @@ function callGemini_(models, key, body, budget) {
       console.error('Gemini HTTP ' + code + ' (모델 ' + model + ', 시도 ' + (attempt + 1) + '): ' + (resp ? resp.getContentText().slice(0, 300) : '연결 실패'));
       if (code === 0 || Date.now() - t1 > 25000) markSlow_(model);   // 응답이 없거나 25초 넘게 걸린 모델은 한동안 건너뜀
       if (code === 429) markSlow_(model, 600);                       // 사용량 초과: 같은 모델로 다시 해도 소용없으니 10분 동안 건너뜀
+      if (code === 404) {
+        // 이 계정에서는 쓸 수 없는 모델(예: '새 사용자에게는 더 이상 제공되지 않음'): 하루 동안 건너뛰고,
+        // 구글이 오류 문구에서 알려 준 대체 모델('use models/...')이 있으면 바로 이어서 시도합니다.
+        markSlow_(model, 86400);
+        var sug = String(resp ? resp.getContentText() : '').match(/use models\/(gemini-[A-Za-z0-9._-]+)/);
+        if (sug && models.indexOf(sug[1]) < 0 && !isSlow_(sug[1])) {
+          console.log('구글이 알려 준 대체 모델을 시도합니다: ' + sug[1] + ' (' + model + ' 대신)');
+          models.push(sug[1]);
+        }
+      }
       var transient = code === 0 || code >= 500;                     // 429는 재시도하지 않음
       if (!transient) break;
       if (Date.now() - t1 > 25000) break;          // 응답이 느린 모델은 같은 모델로 다시 시도하지 않고 다음 모델로 넘어갑니다.
@@ -597,7 +607,7 @@ function checkGemini() {
         })
       });
       var c = rr.getResponseCode(), ms = Date.now() - t0;
-      Logger.log('③ ' + m + ': HTTP ' + c + ', ' + ms + 'ms' + (c === 200 ? '' : ' / ' + String(rr.getContentText()).replace(/\s+/g, ' ').slice(0, 110)));
+      Logger.log('③ ' + m + ': HTTP ' + c + ', ' + ms + 'ms' + (c === 200 ? '' : ' / ' + String(rr.getContentText()).replace(/\s+/g, ' ').slice(0, 230)));
       if (c === 200) results.push({ m: m, ms: ms });
     } catch (e) {
       Logger.log('③ ' + m + ': 응답 없음 (' + (Date.now() - t0) + 'ms 뒤 ' + e + ')');
