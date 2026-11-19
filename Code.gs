@@ -329,6 +329,30 @@ function analyze(b64) {
   return { ok: true, analysisId: id, slots: slots, uncertain: unc, note: String(parsed.note || '').slice(0, 120) };
 }
 
+// 사진은 학생 기기 안에서 컴퓨터가 직접 읽고(LED 색), 이 함수는 그 결과만 받아 검증·저장합니다. (사진이 서버로 오지 않음, AI 호출 없음)
+// LED가 꺼진 칸은 크롬북이 있는지 알 수 없으므로 '비어 있음'으로 두고 반드시 확인하게 합니다.
+function scan(leds) {
+  var r = role_();
+  if (!r.student || !r.student.duty) throw new Error('오늘 당번이 아닙니다.');
+  var cart = cartFor_(r.student);
+  if (!cart) throw new Error('보관함(반) 설정을 찾을 수 없습니다. 선생님께 알려 주세요.');
+  if (!Array.isArray(leds) || leds.length !== CONFIG.SLOTS || !leds.every(function (v) { return v === 'green' || v === 'red' || v === 'lit' || v === 'off'; })) {
+    return { ok: false, manual: true, message: 'LED 읽기 결과가 올바르지 않습니다.' };
+  }
+  var cache = CacheService.getScriptCache();
+  var rlKey = 'rs:' + r.email, used = Number(cache.get(rlKey) || 0);
+  if (!r.teacher && used >= 60) return { ok: false, manual: true, message: '한 시간에 사진 읽기는 60번까지 할 수 있습니다. 잠시 뒤 다시 시도해 주세요.' };
+  cache.put(rlKey, String(used + 1), 3600);
+
+  var slots = leds.map(function (v) { return v === 'lit' ? 'green' : v; });
+  var unc = [];
+  leds.forEach(function (v, i) { if (cart.unused.indexOf(i) < 0 && (v === 'off' || v === 'lit')) unc.push(i); });
+  cart.unused.forEach(function (i) { slots[i] = 'unused'; });
+  var id = Utilities.getUuid();
+  cache.put('an:' + r.email + ':' + id, JSON.stringify({ slots: slots }), 21600);
+  return { ok: true, analysisId: id, slots: slots, uncertain: unc, note: 'LED 색은 컴퓨터가 읽었습니다. 꺼진 칸은 크롬북이 있는지 확인해 주세요.' };
+}
+
 function submit(p) {
   var r = role_();
   if (!r.student || !r.student.duty) throw new Error('오늘 당번이 아닙니다.');

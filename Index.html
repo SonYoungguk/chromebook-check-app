@@ -349,6 +349,204 @@
   }
   document.querySelectorAll('input[name="period"]').forEach(function (r) { r.addEventListener('change', renderPeriodNote); });
 
+  /* ----- LED 읽기: 사진에서 LED 띠를 찾아 칸마다 켜짐/꺼짐을 컴퓨터가 직접 판정합니다 (AI 없이, 사진은 기기 밖으로 나가지 않음) -----
+     원리: LED는 보관함 띠의 어두운 구멍 안에 있습니다.
+           (1) 켜진 LED(초록/빨강)를 찾습니다. 뚜렷한 것과 약한 것(약한 것은 '주변이 어두운 구멍'일 때만 인정)을 모두 모읍니다.
+           (2) 같은 높이에 일정한 간격으로 늘어선 것끼리 묶어 LED 띠(줄)를 찾습니다. 간격이 안 맞는 점은 버립니다.
+           (3) 간격이 일정하다는 점을 이용해 꺼진 LED(어두운 구멍)의 자리까지 찾아 칸 번호를 매깁니다.
+           밝기 기준은 사진마다 자동으로 맞추고, 조금 기울어진 사진도 읽습니다. 확신이 없으면 읽기를 포기합니다(틀리게 읽지 않음).
+     결과: leds[칸 번호-1] = 'green' | 'red' | 'lit'(켜진 듯하나 반사로 색을 모름) | 'off' */
+  function readLeds(canvas, rows, cols) {
+    var W = canvas.width, H = canvas.height;
+    var d = canvas.getContext('2d').getImageData(0, 0, W, H).data;
+    var n = W * H, L = new Float32Array(n), GR = new Int16Array(n), RD = new Int16Array(n);
+    for (var i = 0, p = 0; i < n; i++, p += 4) {
+      var r = d[p], g = d[p + 1], b = d[p + 2];
+      L[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+      GR[i] = g - Math.max(r, b);
+      RD[i] = r - Math.max(g, b);
+    }
+    var long = Math.max(W, H), s = long / 1000;               // 1000px 기준으로 만든 값을 사진 크기에 맞게 늘림
+    var samp = [];
+    for (i = 0; i < n; i += 7) samp.push(L[i]);
+    samp.sort(function (a, b) { return a - b; });
+    var Lref = samp[Math.floor(samp.length * 0.9)] || 200, Td = 0.3 * Lref;   // 사진의 밝은 쪽 밝기와 '어두움' 기준
+    function avg(arr) { var t = 0; arr.forEach(function (v) { t += v; }); return arr.length ? t / arr.length : 0; }
+
+    function darkFrac(cx, cy, rad, thr) {
+      var x0 = Math.max(0, Math.floor(cx - rad)), x1 = Math.min(W - 1, Math.ceil(cx + rad));
+      var y0 = Math.max(0, Math.floor(cy - rad)), y1 = Math.min(H - 1, Math.ceil(cy + rad)), c = 0, t = 0;
+      for (var yy = y0; yy <= y1; yy++) for (var xx = x0; xx <= x1; xx++) { t++; if (L[yy * W + xx] < thr) c++; }
+      return t ? c / t : 0;
+    }
+    function winStat(cx, cy, rad) {
+      var x0 = Math.max(0, Math.floor(cx - rad)), x1 = Math.min(W - 1, Math.ceil(cx + rad));
+      var y0 = Math.max(0, Math.floor(cy - rad)), y1 = Math.min(H - 1, Math.ceil(cy + rad));
+      var mg = -999, mr = -999, sumL = 0, minL = 999, cnt = 0;
+      for (var yy = y0; yy <= y1; yy++) for (var xx = x0; xx <= x1; xx++) {
+        var q = yy * W + xx; if (GR[q] > mg) mg = GR[q]; if (RD[q] > mr) mr = RD[q]; if (L[q] < minL) minL = L[q]; sumL += L[q]; cnt++;
+      }
+      return { green: mg, red: mr, minL: minL, meanL: cnt ? sumL / cnt : 0 };
+    }
+
+    // (1) 켜진 점 찾기
+    var seen = new Uint8Array(n), stack = new Int32Array(n);
+    var contrast = Lref / 220;                                 // 대비가 낮은(뿌연) 사진이면 기준을 낮춤
+    function findBlobs(thG, thR, needHole) {
+      var out = [], mask = new Uint8Array(n);
+      for (var q = 0; q < n; q++) mask[q] = (GR[q] > thG || RD[q] > thR) ? 1 : 0;
+      seen.fill(0);
+      for (var y0 = 0; y0 < H; y0++) for (var x0 = 0; x0 < W; x0++) {
+        var idx0 = y0 * W + x0;
+        if (!mask[idx0] || seen[idx0]) continue;
+        var sp = 0, area = 0, sx = 0, sy = 0;
+        stack[sp++] = idx0; seen[idx0] = 1;
+        while (sp) {
+          var cur = stack[--sp], cx = cur % W, cy = (cur - cx) / W;
+          area++; sx += cx; sy += cy;
+          for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) {
+            var nx = cx + dx, ny = cy + dy;
+            if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+            var ni = ny * W + nx;
+            if (mask[ni] && !seen[ni]) { seen[ni] = 1; stack[sp++] = ni; }
+          }
+        }
+        if (area < Math.max(2, 3 * s * s) || area > 150 * s * s) continue;
+        var bx = sx / area, by = sy / area;
+        if (needHole && darkFrac(bx, by, 6 * s, Td) < 0.05) continue;
+        out.push({ x: bx, y: by, area: area });
+      }
+      return out;
+    }
+    var blobs = findBlobs(70 * contrast, 110 * contrast, false);
+    findBlobs(10, 40, true).forEach(function (b) {
+      var dup = blobs.some(function (o) { return Math.abs(o.x - b.x) < 8 * s && Math.abs(o.y - b.y) < 8 * s; });
+      if (!dup) blobs.push(b);
+    });
+    if (blobs.length < rows * 3) return { ok: false, reason: '켜진 LED를 충분히 찾지 못했습니다' };
+
+    // (2) 줄 찾기: 같은 높이끼리 묶은 뒤, 각 묶음에서 '일정한 간격으로 늘어선 점'만 남김
+    blobs.sort(function (a, b) { return a.y - b.y; });
+    var groups = [], curG = [];
+    blobs.forEach(function (b) {
+      if (curG.length && b.y - curG[curG.length - 1].y > 14 * s) { groups.push(curG); curG = []; }
+      curG.push(b);
+    });
+    if (curG.length) groups.push(curG);
+
+    function fitRow(group) {
+      var pts = group.slice().sort(function (a, b) { return a.x - b.x; });
+      if (pts.length < 3) return null;
+      // 간격: 이웃한 점 사이 거리 중 가장 자주 나오는 값(10% 오차 안에서 묶음)
+      var diffs = [];
+      for (var q = 1; q < pts.length; q++) diffs.push(pts[q].x - pts[q - 1].x);
+      var bestD = null;
+      diffs.forEach(function (dv) {
+        if (dv < 3 * s) return;
+        var members = diffs.filter(function (o) { return Math.abs(o - dv) < dv * 0.12; });
+        if (!bestD || members.length > bestD.cnt || (members.length === bestD.cnt && dv < bestD.v)) bestD = { v: avg(members), cnt: members.length };
+      });
+      if (!bestD || bestD.cnt < 2) return null;
+      var pitch = bestD.v, bestO = null;
+      pts.forEach(function (o) {
+        var inl = pts.filter(function (o2) { var f = (o2.x - o.x) / pitch; return Math.abs(f - Math.round(f)) < 0.2; });
+        if (!bestO || inl.length > bestO.inl.length) bestO = { o: o, inl: inl };
+      });
+      var inl2 = bestO.inl;
+      if (inl2.length < 3) return null;
+      var ix = inl2.map(function (o) { return o.x; }), iy = inl2.map(function (o) { return o.y; });
+      var mx = avg(ix), my = avg(iy), sxx = 0, sxy = 0;
+      for (var z = 0; z < ix.length; z++) { sxx += (ix[z] - mx) * (ix[z] - mx); sxy += (ix[z] - mx) * (iy[z] - my); }
+      var slope = sxx ? sxy / sxx : 0;
+      // 직선에서 너무 벗어난 점은 버림
+      inl2 = inl2.filter(function (o) { return Math.abs(o.y - (my + slope * (o.x - mx))) < 4 * s; });
+      if (inl2.length < 3) return null;
+      var ks = inl2.map(function (o) { return Math.round((o.x - bestO.o.x) / pitch); });
+      return { pitch: pitch, x0: bestO.o.x, inl: inl2, mx: mx, my: my, slope: slope, lo: Math.min.apply(null, ks), hi: Math.max.apply(null, ks), cnt: inl2.length };
+    }
+    var fits = groups.map(fitRow).filter(function (f) { return f; });
+    fits.sort(function (a, b) { return b.cnt - a.cnt; });
+    if (fits.length < rows) return { ok: false, reason: 'LED 띠 ' + rows + '줄을 찾지 못했습니다 (' + fits.length + '줄만 보임)' };
+    // 줄 조합 고르기: LED 간격이 비슷하고(크롬북 몸체의 작은 LED 줄은 간격이 다름) 서로 충분히 떨어진 줄 중 점수가 가장 높은 조합
+    var top = fits.slice(0, 7), picked = null, bestScore = -1;
+    (function combos(start, chosen) {
+      if (chosen.length === rows) {
+        var ps = chosen.map(function (f) { return f.pitch; }), ymin = chosen.map(function (f) { return f.my; }).sort(function (a, b) { return a - b; });
+        var okPitch = Math.max.apply(null, ps) <= Math.min.apply(null, ps) * 1.3, okGap = true;
+        for (var q = 1; q < ymin.length; q++) if (ymin[q] - ymin[q - 1] < 30 * s) okGap = false;
+        var score = chosen.reduce(function (t, f) { return t + f.cnt; }, 0);
+        if (okPitch && okGap && score > bestScore) { bestScore = score; picked = chosen.slice(); }
+        return;
+      }
+      for (var q2 = start; q2 < top.length; q2++) { chosen.push(top[q2]); combos(q2 + 1, chosen); chosen.pop(); }
+    })(0, []);
+    if (!picked) return { ok: false, reason: '간격이 비슷한 LED 띠 ' + rows + '줄을 찾지 못했습니다' };
+    picked.sort(function (a, b) { return a.my - b.my; });
+
+    // (3) 칸 번호 매기기: 구멍(주변보다 어두운 곳)이 이어지는 구간을 찾고, 정확히 cols 개여야 함
+    picked.forEach(function (f) {
+      f.yAt = function (x) { return f.my + f.slope * (x - f.mx); };
+      var kmin = f.lo, kmax = f.hi, metal = [];
+      for (var kk = kmin; kk < kmax; kk++) { var mxp = f.x0 + (kk + 0.5) * f.pitch; metal.push(winStat(mxp, f.yAt(mxp), f.pitch * 0.12).meanL); }
+      metal.sort(function (a, b) { return a - b; });
+      f.metalL = metal.length ? metal[Math.floor(metal.length / 2)] : Lref;
+      var present = {};
+      for (var k = -16; k <= 26; k++) {
+        var gx = f.x0 + k * f.pitch;
+        if (gx < f.pitch || gx > W - f.pitch) continue;
+        if (winStat(gx, f.yAt(gx), f.pitch * 0.35).minL < 0.55 * f.metalL) present[k] = 1;
+      }
+      f.inl.forEach(function (o) { present[Math.round((o.x - f.x0) / f.pitch)] = 1; });
+      var lo = f.lo, hi = f.hi;
+      while (present[lo - 1]) lo--;
+      while (present[hi + 1]) hi++;
+      f.rlo = lo; f.rhi = hi; f.run = hi - lo + 1;
+    });
+    // 구멍의 실제 중심으로 격자를 다시 맞춤: 앵커가 몇 개 안 되는 줄은 간격 오차가 끝으로 갈수록 쌓이므로
+    picked.forEach(function (f) {
+      if (f.run < 5) return;
+      var kx = [], kk2 = [];
+      for (var k = f.rlo; k <= f.rhi; k++) {
+        var px = f.x0 + k * f.pitch, py = f.yAt(px), wx = 0, wy = 0, wsum = 0, rr = Math.ceil(f.pitch * 0.45);
+        for (var yy = Math.max(0, Math.floor(py - rr)); yy <= Math.min(H - 1, Math.ceil(py + rr)); yy++) {
+          for (var xx = Math.max(0, Math.floor(px - rr)); xx <= Math.min(W - 1, Math.ceil(px + rr)); xx++) {
+            var wgt = f.metalL * 0.6 - L[yy * W + xx];
+            if (wgt > 0) { wx += xx * wgt; wy += yy * wgt; wsum += wgt; }
+          }
+        }
+        if (wsum > f.metalL * 0.6 * 3) { kx.push(wx / wsum); kk2.push(k); }
+      }
+      if (kx.length >= 5) {
+        var mk = avg(kk2), mxx = avg(kx), skk = 0, skx = 0;
+        for (var z = 0; z < kk2.length; z++) { skk += (kk2[z] - mk) * (kk2[z] - mk); skx += (kk2[z] - mk) * (kx[z] - mxx); }
+        if (skk > 0) {
+          var np = skx / skk;
+          if (np > f.pitch * 0.85 && np < f.pitch * 1.15) { f.pitch = np; f.x0 = mxx - mk * np; }
+        }
+      }
+    });
+    // 일부 줄에서 끝 구멍이 안 보여 모자라면(빛 반사 등), 정확히 cols 개인 다른 줄의 좌우 끝 위치를 참고해 보충
+    var full = picked.filter(function (f) { return f.run === cols; });
+    picked.forEach(function (f) {
+      if (f.run === cols) return;
+      if (f.run > cols || !full.length) return;
+      var leftX = avg(full.map(function (o) { return o.x0 + o.rlo * o.pitch; })), rightX = avg(full.map(function (o) { return o.x0 + o.rhi * o.pitch; }));
+      var kL = Math.round((leftX - f.x0) / f.pitch), kR = kL + cols - 1;
+      if (Math.abs((f.x0 + kR * f.pitch) - rightX) < f.pitch * 0.8 && kL <= f.rlo && kR >= f.rhi) { f.rlo = kL; f.rhi = kR; f.run = cols; }
+    });
+    var leds = [], centers = [];
+    for (var gi = 0; gi < rows; gi++) {
+      var f2 = picked[gi];
+      if (f2.run !== cols) return { ok: false, reason: (gi + 1) + '번째 줄에서 LED ' + f2.run + '개를 찾았습니다 (' + cols + '개여야 함)' };
+      for (var k2 = f2.rlo; k2 <= f2.rhi; k2++) {
+        var cx2 = f2.x0 + k2 * f2.pitch, cy2 = f2.yAt(cx2), st = winStat(cx2, cy2, f2.pitch * 0.4), center = winStat(cx2, cy2, f2.pitch * 0.2);
+        var state = st.green > 10 ? 'green' : (st.red > 40 ? 'red' : (center.meanL > 0.65 * f2.metalL ? 'lit' : 'off'));
+        leds.push(state); centers.push({ x: cx2, y: cy2, r: f2.pitch * 0.4 });
+      }
+    }
+    return { ok: true, leds: leds, centers: centers };
+  }
+
   /* ----- 사진 ----- */
   function status(msg, err) { var el = $('#status'); el.textContent = msg || ''; el.className = 'status' + (err ? ' err' : ''); }
 
@@ -360,8 +558,11 @@
         var w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
         var c = document.createElement('canvas'); c.width = w; c.height = h;
         c.getContext('2d').drawImage(img, 0, 0, w, h);
-        var d = c.toDataURL('image/jpeg', 0.85); URL.revokeObjectURL(url);
-        res({ b64: d.split(',')[1], url: d });
+        var d = c.toDataURL('image/jpeg', 0.85);
+        var k2 = Math.min(1, 1200 / Math.max(img.naturalWidth, img.naturalHeight));       // LED 읽기용 1200px 사본
+        var c2 = document.createElement('canvas'); c2.width = Math.round(img.naturalWidth * k2); c2.height = Math.round(img.naturalHeight * k2);
+        c2.getContext('2d').drawImage(img, 0, 0, c2.width, c2.height); URL.revokeObjectURL(url);
+        res({ b64: d.split(',')[1], url: d, small: c2 });
       };
       img.onerror = function () { rej(new Error('사진을 읽을 수 없습니다.')); };
       img.src = url;
@@ -406,6 +607,10 @@
     }, 1000);
     readPhoto(file).then(function (p) {
       var pv = $('#preview'); pv.src = p.url; pv.hidden = false;
+      var led = null;
+      try { led = readLeds(p.small, Math.ceil(N / COLS), COLS); } catch (e) { led = null; }
+      if (led && led.ok && led.leds.length === N) { status('LED를 읽었습니다.'); return run('scan', led.leds); }
+      status('LED를 직접 읽지 못해 AI가 사진을 봅니다.');
       return run('analyze', p.b64);
     }).then(function (r) {
       if (S.skipped) return;                       // 기다리지 않고 직접 표시로 넘어간 뒤에 온 결과는 무시
